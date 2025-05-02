@@ -1,0 +1,6 @@
+streamlit>=1.32.0
+openai>=1.12.0
+agentic-doc>=0.0.21
+PyMuPDF>=1.25.0
+Pillow>=10.0.0
+python-dotenv>=1.0.0
