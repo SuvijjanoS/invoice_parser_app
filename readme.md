@@ -6,7 +6,7 @@ Add new fields with name and description
 Edit existing fields
 Remove unwanted fields
 
-How to use the code 2
+How to use the code
 
 
 Reset to defaults
