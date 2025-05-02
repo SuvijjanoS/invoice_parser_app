@@ -110,16 +110,34 @@ import re
 # Load environment variables from .env file if it exists
 load_dotenv()
 
-# Configure OpenAI
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise ValueError("Please set OPENAI_API_KEY environment variable")
-client = OpenAI(api_key=OPENAI_API_KEY)
+import streamlit as st
+from dotenv import load_dotenv
+load_dotenv()  # preserves local .env for testing
 
-# Configure Vision Agent
+# Fetch secrets first, then fallback to env vars
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 VISION_AGENT_API_KEY = st.secrets.get("VISION_AGENT_API_KEY") or os.getenv("VISION_AGENT_API_KEY")
-if not VISION_AGENT_API_KEY:
-    raise ValueError("Please set VISION_AGENT_API_KEY environment variable")
+
+if not OPENAI_API_KEY or not VISION_AGENT_API_KEY:
+    st.error(
+        "🔑 API keys missing!\n\n"
+        "Please go to your Streamlit Cloud app’s Settings → Secrets, "
+        "and add:\n"
+        "  • OPENAI_API_KEY = <your OpenAI key>\n"
+        "  • VISION_AGENT_API_KEY = <your Agentic Doc key>\n"
+    )
+    st.stop()
+
+# Now initialize the clients with the keys
+client = OpenAI(api_key=OPENAI_API_KEY)
+settings = Settings(
+    vision_agent_api_key=VISION_AGENT_API_KEY,
+    batch_size=4,
+    max_workers=5,
+    max_retries=100,
+    max_retry_wait_time=60,
+    retry_logging_style="log_msg"
+)
 
 # Configure agentic-doc settings
 settings = Settings(
