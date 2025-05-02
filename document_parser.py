@@ -560,7 +560,7 @@ def main():
         st.error("Vision Agent API Key is not set!")
         st.stop()
     else:
-        st.success(f"Vision Agent API Key is set (starts with: {VISION_AGENT_API_KEY[:8]}...)")
+        st.success(f"System Ready")
     
     # File upload
     uploaded_file = st.file_uploader("Upload document", type=["pdf", "png", "jpg", "jpeg"])
