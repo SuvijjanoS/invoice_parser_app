@@ -58,6 +58,10 @@ COLORS = [
     (128, 255, 128),  # Light Green
 ]
 
+# Constants for match/mismatch colors
+MATCH_COLOR = (0, 255, 0)      # Green
+MISMATCH_COLOR = (255, 0, 0)   # Red
+
 def initialize_clients():
     if not OPENAI_API_KEY:
         st.error(
@@ -95,7 +99,6 @@ def initialize_clients():
     return client
 
 # Helper functions
-
 def get_default_fields() -> List[Dict[str, str]]:
     return [
         {"name": "Document Type", "description": "The type of document (e.g., Invoice, Receipt, etc.)"},
@@ -108,44 +111,44 @@ def get_default_fields() -> List[Dict[str, str]]:
         {"name": "VAT", "description": "The value-added-tax on the invoice."}
     ]
 
+def manage_fields(container, prefix):
+    container.subheader("Manage Fields")
+    if f'{prefix}_extraction_fields' not in st.session_state:
+        st.session_state[f'{prefix}_extraction_fields'] = get_default_fields()
 
-def manage_fields():
-    st.subheader("Manage Fields")
-    if 'extraction_fields' not in st.session_state:
-        st.session_state.extraction_fields = get_default_fields()
-
-    st.markdown("### Add New Field")
-    col1, col2, col3 = st.columns([2, 3, 1])
+    container.markdown("### Add New Field")
+    col1, col2, col3 = container.columns([2, 3, 1])
     with col1:
-        new_name = st.text_input("Field Name", key="new_name")
+        new_name = st.text_input("Field Name", key=f"{prefix}_new_name")
     with col2:
-        new_desc = st.text_input("Field Description", key="new_desc")
+        new_desc = st.text_input("Field Description", key=f"{prefix}_new_desc")
     with col3:
-        if st.button("Add Field") and new_name and new_desc:
-            st.session_state.extraction_fields.append({"name": new_name, "description": new_desc})
-            st.session_state.new_name = ""
-            st.session_state.new_desc = ""
+        if st.button("Add Field", key=f"{prefix}_add_field") and new_name and new_desc:
+            st.session_state[f'{prefix}_extraction_fields'].append({"name": new_name, "description": new_desc})
+            st.session_state[f'{prefix}_new_name'] = ""
+            st.session_state[f'{prefix}_new_desc'] = ""
             st.rerun()
 
-    st.markdown("### Current Fields")
-    for idx, fld in enumerate(st.session_state.extraction_fields):
-        c1, c2, c3, c4 = st.columns([2, 3, 1, 1])
+    container.markdown("### Current Fields")
+    for idx, fld in enumerate(st.session_state[f'{prefix}_extraction_fields']):
+        c1, c2, c3, c4 = container.columns([2, 3, 1, 1])
         with c1:
-            fld['name'] = st.text_input("Name", value=fld['name'], key=f"name_{idx}")
+            fld['name'] = st.text_input("Name", value=fld['name'], key=f"{prefix}_name_{idx}")
         with c2:
-            fld['description'] = st.text_input("Description", value=fld['description'], key=f"desc_{idx}")
+            fld['description'] = st.text_input("Description", value=fld['description'], key=f"{prefix}_desc_{idx}")
         with c3:
-            if st.button("Remove", key=f"rm_{idx}"):
-                st.session_state.extraction_fields.pop(idx)
+            if st.button("Remove", key=f"{prefix}_rm_{idx}"):
+                st.session_state[f'{prefix}_extraction_fields'].pop(idx)
                 st.rerun()
         with c4:
-            st.checkbox("Extract", value=True, key=f"ext_{idx}")
+            st.checkbox("Extract", value=True, key=f"{prefix}_ext_{idx}")
 
-    if st.button("Reset to Default Fields"):
-        st.session_state.extraction_fields = get_default_fields()
+    if st.button("Reset to Default Fields", key=f"{prefix}_reset"):
+        st.session_state[f'{prefix}_extraction_fields'] = get_default_fields()
         st.rerun()
 
-    return [fld for i, fld in enumerate(st.session_state.extraction_fields) if st.session_state.get(f"ext_{i}", True)]
+    return [fld for i, fld in enumerate(st.session_state[f'{prefix}_extraction_fields']) 
+            if st.session_state.get(f"{prefix}_ext_{i}", True)]
 
 
 def extract_fields_with_openai(client, text: str, fields: List[Dict[str, str]], chunks: List[Any] = None) -> Dict[str, Any]:
@@ -393,6 +396,91 @@ def display_unified_evidence(data: Dict[str, Any], path: str):
         st.image(final_img, caption=f"Page {page_idx + 1} with all extracted fields")
 
 
+def display_comparison_evidence(source_data: Dict[str, Any], reference_data: Dict[str, Any], 
+                               source_path: str):
+    """Display comparison between source and reference with match/mismatch highlighting."""
+    # Group all matching chunks by page_idx
+    page_chunks = defaultdict(list)
+    
+    # Build comparison data
+    comparison_results = {}
+    
+    for field_name, field_data in source_data.items():
+        source_value = field_data.get('value')
+        reference_value = reference_data.get(field_name, {}).get('value')
+        
+        match_status = False
+        if source_value and reference_value:
+            # Basic string comparison (could be enhanced with fuzzy matching)
+            match_status = source_value.strip().lower() == reference_value.strip().lower()
+        
+        comparison_results[field_name] = {
+            'source_value': source_value,
+            'reference_value': reference_value,
+            'match': match_status
+        }
+        
+        # Get coordinates for visualization
+        if field_data.get('value') and field_data.get('matching_chunks'):
+            chunk = field_data['matching_chunks'][0]  # Take first matching chunk
+            coords_list = get_chunk_coordinates(chunk, source_path)
+            
+            for item in coords_list:
+                color = MATCH_COLOR if match_status else MISMATCH_COLOR
+                page_chunks[item['page_idx']].append({
+                    'field_name': field_name,
+                    'value': field_data['value'],
+                    'coords': item['coords'],
+                    'match': match_status
+                })
+    
+    # Create a tabular display for comparison results
+    st.markdown("### Field Comparison Results")
+    
+    # Create DataFrame-compatible data for comparison table
+    table_md = "| Field | Source Value | Reference Value | Match |\n| --- | --- | --- | :---: |\n"
+    
+    for field_name, result in comparison_results.items():
+        source_val = result['source_value'] or "Not found"
+        ref_val = result['reference_value'] or "Not found"
+        match_icon = "✅" if result['match'] else "❌"
+        table_md += f"| {field_name} | {source_val} | {ref_val} | {match_icon} |\n"
+    
+    st.markdown(table_md)
+    
+    # For each page with data, create a combined visualization
+    st.markdown("### Document with Match/Mismatch Highlighting")
+    for page_idx, chunks in page_chunks.items():
+        # Only process if there are chunks on this page
+        if not chunks:
+            continue
+            
+        img = get_document_image(source_path, page_idx)
+        if not img:
+            continue
+            
+        # Start with the base image
+        final_img = img.copy()
+        
+        # Add all bounding boxes
+        for chunk_data in chunks:
+            field_name = chunk_data['field_name']
+            coords = chunk_data['coords']
+            color = MATCH_COLOR if chunk_data['match'] else MISMATCH_COLOR
+            match_status = "✓" if chunk_data['match'] else "✗"
+            label = f"{field_name} {match_status}"
+            
+            final_img = draw_bounding_box(
+                final_img, 
+                coords, 
+                color=color, 
+                label=label
+            )
+        
+        # Display the final image with all bounding boxes
+        st.image(final_img, caption=f"Page {page_idx + 1} with match/mismatch highlighting")
+
+
 def save_image_file(img: Image.Image, temp_dir: Path, filename: str) -> Path:
     """Save a PIL Image to a temporary file."""
     out_path = temp_dir / filename
@@ -407,130 +495,267 @@ def format_time(seconds: float) -> str:
     return f"{minutes} mins {seconds:.2f} secs"
 
 
-def main():
-    st.set_page_config(layout="wide")
-    st.title("📄 Invoice Field Extractor")
-    st.write("Upload invoices to extract fields.")
+def process_file(file_path: Path, selected_fields, client, temp_dir: Path):
+    """Process a single file and return extracted data."""
+    file_paths_to_process = []
+    
+    # If PDF, convert to images first
+    if str(file_path).lower().endswith('.pdf'):
+        images = convert_pdf_to_images(str(file_path))
+        
+        # Save each page as an image file
+        for i, img in enumerate(images):
+            img_path = save_image_file(img, temp_dir, f"page_{i}_{file_path.name}.png")
+            file_paths_to_process.append(img_path)
+    else:
+        # For image files, use directly
+        file_paths_to_process.append(file_path)
+    
+    all_results = []
+    
+    # Process all paths for this file
+    for path_idx, path in enumerate(file_paths_to_process):
+        if agentic_imported:
+            try:
+                # Parse documents
+                results = parse_documents([str(path)])
+                doc = results[0]
+                text = "\n".join(c.text for c in doc.chunks)
+                
+                data = extract_fields_with_openai(client, text, selected_fields, doc.chunks)
+                all_results.append({
+                    'path': path,
+                    'data': data,
+                    'doc': doc
+                })
+                
+            except Exception as e:
+                st.error(f"Error processing {path.name}: {e}")
+        else:
+            st.error("Cannot process without agentic_doc package. Please install it.")
+            return []
+    
+    return all_results
 
+
+def main():
+    st.set_page_config(layout="wide", page_title="Invoice Field Extractor & Comparator")
+    
+    # Check if client can be initialized
     client = initialize_clients()
     if client is None:
         st.stop()
-
-    selected = manage_fields()
     
-    # Add visualization options
-    st.subheader("Visualization Options")
-    vis_option = st.radio(
-        "Choose how to display extracted fields:",
-        ["Option 1: Output each field with corresponding reference image",
-         "Option 2: Multiple color-coded bounding boxes per reference document"]
-    )
+    # Create the three-frame layout
+    st.markdown("# 📄 Invoice Field Extractor & Comparator")
     
-    # Allow multiple file uploads
-    uploaded_files = st.file_uploader("Upload documents", type=['pdf', 'png', 'jpg', 'jpeg'], accept_multiple_files=True)
-
-    if uploaded_files and selected and st.button("Extract Fields"):
-        total_kb = sum(file.size / 1024 for file in uploaded_files)
-        st.write(f"Total file size: {total_kb:.2f} KB")
+    # Split the screen into top and bottom frames
+    top_container = st.container()
+    bottom_container = st.container()
+    
+    # Split the top container into left and right
+    with top_container:
+        left_col, right_col = st.columns(2)
         
-        # Initialize processing metrics
-        start_time = time.time()
+        # Left frame (Files to check)
+        with left_col:
+            st.markdown("## Files to Check")
+            source_selected = manage_fields(left_col, "source")
+            source_files = st.file_uploader("Upload documents to check", 
+                                           type=['pdf', 'png', 'jpg', 'jpeg'], 
+                                           accept_multiple_files=True,
+                                           key="source_files")
         
-        # Create a progress bar
-        progress_bar = st.progress(0)
-        progress_text = st.empty()
+        # Right frame (Reference files)
+        with right_col:
+            st.markdown("## Reference Files")
+            reference_selected = manage_fields(right_col, "reference")
+            reference_files = st.file_uploader("Upload reference documents", 
+                                              type=['pdf', 'png', 'jpg', 'jpeg'], 
+                                              accept_multiple_files=True,
+                                              key="reference_files")
+    
+    # Bottom frame (Processing Options)
+    with bottom_container:
+        st.markdown("## Processing Options")
         
-        # Create a temporary directory for processing
-        with tempfile.TemporaryDirectory() as td:
-            temp_dir = Path(td)
+        process_option = st.radio(
+            "Choose processing option:",
+            ["Option 1: Extract desired field information only",
+             "Option 2: Extract and Compare fields against reference document"]
+        )
+        
+        vis_option = st.radio(
+            "Choose visualization style (for Option 1):",
+            ["Show each field with corresponding reference image",
+             "Show multiple color-coded bounding boxes per document"],
+            key="vis_option"
+        )
+        
+        # Add spacer
+        st.markdown("---")
+        
+        # Process button
+        if st.button("Process Documents"):
+            if not source_files:
+                st.error("Please upload at least one document to check")
+                st.stop()
+                
+            if "Option 2" in process_option and not reference_files:
+                st.error("Please upload at least one reference document for comparison")
+                st.stop()
             
-            # Process each file
-            for file_idx, uploaded_file in enumerate(uploaded_files):
-                progress_text.text(f"Processing file {file_idx + 1}/{len(uploaded_files)}: {uploaded_file.name}")
-                progress_bar.progress((file_idx) / len(uploaded_files))
+            # Create a temporary directory for processing
+            with tempfile.TemporaryDirectory() as td:
+                temp_dir = Path(td)
                 
-                # Save uploaded file to temp directory
-                original_path = temp_dir / f"original_{uploaded_file.name}"
-                original_path.write_bytes(uploaded_file.getvalue())
+                # Initialize timing metrics
+                start_time = time.time()
                 
-                file_paths_to_process = []
+                # Create progress tracking elements
+                progress_bar = st.progress(0)
+                progress_text = st.empty()
                 
-                # If PDF, convert to images first
-                if uploaded_file.name.lower().endswith('.pdf'):
-                    images = convert_pdf_to_images(str(original_path))
+                # Option 1: Extract only
+                if "Option 1" in process_option:
+                    st.subheader("Extraction Results")
                     
-                    # Save each page as an image file
-                    for i, img in enumerate(images):
-                        img_path = save_image_file(img, temp_dir, f"page_{i}_{uploaded_file.name}.png")
-                        file_paths_to_process.append(img_path)
-                else:
-                    # For image files, use directly
-                    file_paths_to_process.append(original_path)
-                
-                # Process all paths for this file
-                for path_idx, path in enumerate(file_paths_to_process):
-                    st.write(f"Processing {path.name} ({path_idx + 1}/{len(file_paths_to_process)})")
+                    # Calculate total file size
+                    total_kb = sum(file.size / 1024 for file in source_files)
+                    st.write(f"Total file size: {total_kb:.2f} KB")
                     
-                    if agentic_imported:
-                        try:
-                            # Process timing for this specific file
-                            file_start_time = time.time()
+                    # Process each source file
+                    for file_idx, uploaded_file in enumerate(source_files):
+                        progress_text.text(f"Processing file {file_idx + 1}/{len(source_files)}: {uploaded_file.name}")
+                        progress_bar.progress((file_idx) / len(source_files))
+                        
+                        # Save uploaded file to temp directory
+                        original_path = temp_dir / f"source_{uploaded_file.name}"
+                        original_path.write_bytes(uploaded_file.getvalue())
+                        
+                        # Process timing for this specific file
+                        file_start_time = time.time()
+                        
+                        # Process the file
+                        results = process_file(original_path, source_selected, client, temp_dir)
+                        
+                        # Calculate timing information
+                        file_end_time = time.time()
+                        file_processing_time = file_end_time - file_start_time
+                        file_size_kb = original_path.stat().st_size / 1024
+                        time_per_kb = file_processing_time / file_size_kb if file_size_kb > 0 else 0
+                        
+                        st.success(f"✅ File {uploaded_file.name} processed in {format_time(file_processing_time)}")
+                        st.info(f"File size: {file_size_kb:.2f} KB | Time per KB: {format_time(time_per_kb)} per KB")
+                        
+                        # Display results for each page/image processed
+                        for result in results:
+                            st.subheader(f"Results for {result['path'].name}")
                             
-                            # Parse documents
-                            results = parse_documents([str(path)])
-                            doc = results[0]
-                            text = "\n".join(c.text for c in doc.chunks)
-                            
-                            data = extract_fields_with_openai(client, text, selected, doc.chunks)
-                            
-                            # Calculate and display timing information
-                            file_end_time = time.time()
-                            file_processing_time = file_end_time - file_start_time
-                            file_size_kb = path.stat().st_size / 1024
-                            time_per_kb = file_processing_time / file_size_kb if file_size_kb > 0 else 0
-                            
-                            st.success(f"✅ File {path.name} processed in {format_time(file_processing_time)}")
-                            st.info(f"File size: {file_size_kb:.2f} KB | Time per KB: {format_time(time_per_kb)} per KB")
-                            
-                            # Display results based on selected visualization option
-                            if "Option 1" in vis_option:  # Original method - one image per field
-                                st.subheader(f"Extracted Fields with Individual Images - {path.name}")
-                                for idx, (nm, fd) in enumerate(data.items()):
-                                    if fd.get('value'):
-                                        st.markdown(f"### {nm}: {fd['value']}")
-                                        if fd.get('matching_chunks'):
+                            # Display based on visualization option
+                            if "each field" in vis_option:
+                                # Option 1 - Individual images per field
+                                for idx, (field_name, field_data) in enumerate(result['data'].items()):
+                                    if field_data.get('value'):
+                                        st.markdown(f"### {field_name}: {field_data['value']}")
+                                        if field_data.get('matching_chunks'):
                                             # Get color for this field
                                             color_idx = idx % len(COLORS)
-                                            display_chunk_evidence(fd['matching_chunks'][0], nm, str(path), COLORS[color_idx])
-                            
-                            else:  # Option 2 - Combined visualization with improved tabular display
-                                st.subheader(f"Unified View - {path.name}")
-                                display_unified_evidence(data, str(path))
-                                
-                        except Exception as e:
-                            st.error(f"Error processing {path.name}: {e}")
+                                            display_chunk_evidence(
+                                                field_data['matching_chunks'][0], 
+                                                field_name, 
+                                                str(result['path']), 
+                                                COLORS[color_idx]
+                                            )
+                            else:
+                                # Option 2 - Unified visualization
+                                display_unified_evidence(result['data'], str(result['path']))
+                
+                # Option 2: Extract and Compare
+                else:
+                    st.subheader("Comparison Results")
+                    
+                    # We'll use the first file from each group for comparison
+                    if not source_files or not reference_files:
+                        st.error("Please upload both source and reference documents")
+                        st.stop()
+                    
+                    source_file = source_files[0]
+                    reference_file = reference_files[0]
+                    
+                    # Save uploaded files to temp directory
+                    source_path = temp_dir / f"source_{source_file.name}"
+                    source_path.write_bytes(source_file.getvalue())
+                    
+                    reference_path = temp_dir / f"reference_{reference_file.name}"
+                    reference_path.write_bytes(reference_file.getvalue())
+                    
+                    # Process timing
+                    comparison_start_time = time.time()
+                    
+                    # Process both files
+                    progress_text.text(f"Processing source file: {source_file.name}")
+                    progress_bar.progress(0.25)
+                    source_results = process_file(source_path, source_selected, client, temp_dir)
+                    
+                    progress_text.text(f"Processing reference file: {reference_file.name}")
+                    progress_bar.progress(0.5)
+                    reference_results = process_file(reference_path, reference_selected, client, temp_dir)
+                    
+                    progress_text.text("Comparing results...")
+                    progress_bar.progress(0.75)
+                    
+                    # Get the extracted data
+                    if source_results and reference_results:
+                        source_data = source_results[0]['data']
+                        reference_data = reference_results[0]['data']
+                        
+                        # Display comparison
+                        display_comparison_evidence(
+                            source_data, 
+                            reference_data, 
+                            str(source_results[0]['path'])
+                        )
                     else:
-                        st.error("Cannot process without agentic_doc package. Please install it.")
-            
-            # Update progress to complete
-            progress_bar.progress(1.0)
-            progress_text.text("Processing complete!")
-            
-            # Display overall timing information
-            end_time = time.time()
-            total_processing_time = end_time - start_time
-            time_per_kb_overall = total_processing_time / total_kb if total_kb > 0 else 0
-            
-            st.success(f"🎉 All files processed successfully!")
-            
-            # Create a metrics display for timing
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Processing Time", format_time(total_processing_time))
-            with col2:
-                st.metric("Total File Size", f"{total_kb:.2f} KB")
-            with col3:
-                st.metric("Avg Time per KB", format_time(time_per_kb_overall))
+                        st.error("Error processing files for comparison")
+                    
+                    # Calculate timing information
+                    comparison_end_time = time.time()
+                    comparison_time = comparison_end_time - comparison_start_time
+                    
+                    # Display timing metrics
+                    total_size_kb = source_path.stat().st_size / 1024 + reference_path.stat().st_size / 1024
+                    time_per_kb = comparison_time / total_size_kb if total_size_kb > 0 else 0
+                    
+                    st.success(f"✅ Comparison completed in {format_time(comparison_time)}")
+                    st.info(f"Total size: {total_size_kb:.2f} KB | Time per KB: {format_time(time_per_kb)} per KB")
+                
+                # Update progress to complete
+                progress_bar.progress(1.0)
+                progress_text.text("Processing complete!")
+                
+                # Display overall timing information
+                end_time = time.time()
+                total_processing_time = end_time - start_time
+                
+                # For Option 1, calculate total KB
+                if "Option 1" in process_option:
+                    total_kb = sum(file.size / 1024 for file in source_files)
+                    time_per_kb_overall = total_processing_time / total_kb if total_kb > 0 else 0
+                else:
+                    # For Option 2, use source + reference file size
+                    total_kb = source_file.size / 1024 + reference_file.size / 1024
+                    time_per_kb_overall = total_processing_time / total_kb if total_kb > 0 else 0
+                
+                # Create a metrics display for timing
+                st.markdown("## Processing Time Metrics")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Processing Time", format_time(total_processing_time))
+                with col2:
+                    st.metric("Total File Size", f"{total_kb:.2f} KB")
+                with col3:
+                    st.metric("Avg Time per KB", format_time(time_per_kb_overall))
 
 if __name__ == "__main__":
     main()
