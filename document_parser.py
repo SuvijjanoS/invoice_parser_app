@@ -359,211 +359,183 @@ def display_unified_evidence(data: Dict[str, Any], path: str):
 
 def create_interactive_view(data: Dict[str, Any], path: str):
     """Create an interactive view with mouse-over highlighting."""
-    # Prepare data for interactive display
-    field_data = []
+    # Prepare color mapping
     color_map = {}
-    field_coords = {}
-    
-    # Process data and create mappings
-    for idx, (field_name, field_info) in enumerate(data.items()):
-        if field_info.get('value') and field_info.get('matching_chunks'):
+    for idx, field_name in enumerate(data.keys()):
+        if data[field_name].get('value'):
             color_idx = idx % len(COLORS)
-            color = COLORS[color_idx]
-            color_map[field_name] = color
-            
-            # RGB to hex for CSS
-            hex_color = "#{:02x}{:02x}{:02x}".format(*color)
-            
-            # Store field data
-            field_data.append({
-                'name': field_name,
-                'value': field_info['value'],
-                'color': hex_color
-            })
-            
-            # Get coordinates for each field
-            chunk = field_info['matching_chunks'][0]
-            coords_list = get_chunk_coordinates(chunk, path)
-            
-            if coords_list:
-                field_coords[field_name] = coords_list
+            color_map[field_name] = COLORS[color_idx]
     
-    # Group coordinate data by page
-    page_data = defaultdict(list)
-    for field_name, coords_list in field_coords.items():
-        for coord_item in coords_list:
-            page_data[coord_item['page_idx']].append({
-                'field_name': field_name,
-                'coords': coord_item['coords'],
-                'color': color_map[field_name]
-            })
+    # Create a container for our interactive display
+    st.markdown("### Interactive Field Extraction Results")
     
-    # Create professional-looking table with CSS
+    # Create two columns - one for the table, one for the document
+    col1, col2 = st.columns([2, 3])
+    
+    with col1:
+        st.markdown("#### Extracted Fields")
+        
+        # Create a container for the table
+        table_container = st.container()
+        
+        # Track which field is currently highlighted (using session state)
+        if 'highlighted_field' not in st.session_state:
+            st.session_state.highlighted_field = None
+            
+        # Create table of extracted fields
+        for field_name, field_data in data.items():
+            if field_data.get('value'):
+                color = color_map.get(field_name, (255, 0, 0))
+                hex_color = "#{:02x}{:02x}{:02x}".format(*color)
+                
+                # Create an element for each field that can be clicked
+                is_active = st.session_state.highlighted_field == field_name
+                bgcolor = hex_color + "30" if is_active else "#ffffff"
+                
+                # Create interactive row with hover effect
+                table_container.markdown(
+                    f"""
+                    <div class="field-row" 
+                         style="padding: 10px; margin-bottom: 4px; border-radius: 4px; 
+                                border: 1px solid #eee; background-color: {bgcolor};"
+                         onmouseover="highlightField('{field_name}')" 
+                         onmouseout="unhighlightAll()">
+                        <div style="font-weight: bold; color: {hex_color};">{field_name}</div>
+                        <div>{field_data['value']}</div>
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+                
+    with col2:
+        st.markdown("#### Document View")
+        
+        # Group data by page
+        page_data = defaultdict(list)
+        
+        for field_name, field_info in data.items():
+            if field_info.get('value') and field_info.get('matching_chunks'):
+                chunk = field_info['matching_chunks'][0]
+                coords_list = get_chunk_coordinates(chunk, path)
+                
+                for coord_item in coords_list:
+                    page_data[coord_item['page_idx']].append({
+                        'field_name': field_name,
+                        'coords': coord_item['coords'],
+                        'color': color_map.get(field_name, (255, 0, 0))
+                    })
+        
+        # For each page with data
+        for page_idx, items in page_data.items():
+            img = get_document_image(path, page_idx)
+            if not img:
+                continue
+                
+            # Create base image and highlighted versions
+            base_img = img.copy()
+            highlighted_images = {}
+            
+            # Create a highlighted version for each field
+            for item in items:
+                field_name = item['field_name']
+                if field_name not in highlighted_images:
+                    highlighted_img = img.copy()
+                    highlighted_images[field_name] = highlighted_img
+                
+                # Add bounding box to this field's image
+                highlighted_images[field_name] = draw_bounding_box(
+                    highlighted_images[field_name],
+                    item['coords'],
+                    color=item['color'],
+                    label=field_name
+                )
+            
+            # Display the base image in the Streamlit app
+            img_container = st.container()
+            img_container.image(base_img, caption=f"Page {page_idx + 1}", use_column_width=True)
+            
+            # Create clickable hotspots for each field on the image
+            for item in items:
+                field_name = item['field_name']
+                coords = item['coords']
+                
+                # Calculate relative position for the hotspot
+                x0, y0, x1, y1 = coords
+                width, height = base_img.size
+                left = int(x0 * width)
+                top = int(y0 * height)
+                area_width = int((x1 - x0) * width)
+                area_height = int((y1 - y0) * height)
+                
+                # Add this field to our trackers
+                if field_name not in st.session_state.get('hotspot_areas', {}):
+                    if 'hotspot_areas' not in st.session_state:
+                        st.session_state.hotspot_areas = {}
+                    
+                    st.session_state.hotspot_areas[field_name] = {
+                        'page': page_idx,
+                        'left': left,
+                        'top': top,
+                        'width': area_width,
+                        'height': area_height
+                    }
+            
+            # Handle highlighting based on session state
+            if st.session_state.highlighted_field and st.session_state.highlighted_field in highlighted_images:
+                img_container.image(
+                    highlighted_images[st.session_state.highlighted_field],
+                    caption=f"Highlighted: {st.session_state.highlighted_field}",
+                    use_column_width=True
+                )
+    
+    # Add custom CSS and JavaScript for interactivity
     st.markdown("""
     <style>
-    .highlight-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-bottom: 20px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        border-radius: 8px;
-        overflow: hidden;
-    }
-    .highlight-table th {
-        background-color: #f2f2f2;
-        padding: 12px 15px;
-        text-align: left;
-        font-weight: bold;
-        border-bottom: 1px solid #ddd;
-    }
-    .highlight-table td {
-        padding: 10px 15px;
-        border-bottom: 1px solid #ddd;
-    }
-    .highlight-table tr:last-child td {
-        border-bottom: none;
-    }
-    .highlight-table tr:hover {
-        background-color: #f9f9f9;
+    .field-row:hover {
+        background-color: rgba(240, 240, 240, 0.8) !important;
+        cursor: pointer;
     }
     </style>
-    """, unsafe_allow_html=True)
     
-    # Build the interactive table
-    table_html = """
-    <div class="highlight-table-container">
-    <table class="highlight-table">
-        <thead>
-            <tr>
-                <th>Field</th>
-                <th>Value</th>
-            </tr>
-        </thead>
-        <tbody>
-    """
-    
-    for field in field_data:
-        table_html += f"""
-        <tr id="field-row-{field['name'].replace(' ', '-').lower()}" 
-            onmouseover="highlightField('{field['name']}', '{field['color']}')" 
-            onmouseout="unhighlightAll()">
-            <td>{field['name']}</td>
-            <td>{field['value']}</td>
-        </tr>
-        """
-    
-    table_html += """
-        </tbody>
-    </table>
-    </div>
-    """
-    
-    # Display the table
-    st.markdown("### Extracted Fields")
-    st.markdown(table_html, unsafe_allow_html=True)
-    
-    # Prepare document images for each page
-    st.markdown("### Document View")
-    
-    # For each page with data
-    for page_idx, items in page_data.items():
-        img = get_document_image(path, page_idx)
-        if not img:
-            continue
-            
-        # Save base image and create image for each field
-        img_path = f"page_{page_idx}.png"
-        img.save(img_path)
-        
-        # Create overlay images for each field
-        field_images = {}
-        for item in items:
-            field_name = item['field_name']
-            if field_name not in field_images:
-                overlay_img = img.copy()
-                field_images[field_name] = {
-                    'path': f"page_{page_idx}_{field_name.replace(' ', '_').lower()}.png",
-                    'image': overlay_img,
-                    'color': item['color']
-                }
-        
-        # Draw bounding boxes on each field's image
-        for item in items:
-            field_name = item['field_name']
-            coords = item['coords']
-            
-            # Add bounding box to the field's image
-            field_images[field_name]['image'] = draw_bounding_box(
-                field_images[field_name]['image'], 
-                coords, 
-                color=item['color'], 
-                label=field_name
-            )
-        
-        # Save all field overlay images
-        for field_name, img_data in field_images.items():
-            img_data['image'].save(img_data['path'])
-        
-        # Create interactive overlay container
-        st.markdown(f"""
-        <div style="position: relative; width: 100%;">
-            <img id="base-image-{page_idx}" src="file://{os.path.abspath(img_path)}" 
-                 style="width: 100%; display: block;">
-            
-            <!-- Overlay images for each field -->
-            {' '.join([f'<img id="overlay-{page_idx}-{field_name.replace(" ", "-").lower()}" '
-                      f'src="file://{os.path.abspath(img_data["path"])}" '
-                      f'style="position: absolute; top: 0; left: 0; width: 100%; opacity: 0; pointer-events: none;">'
-                     for field_name, img_data in field_images.items()])}
-            
-            <!-- Clickable areas for each field -->
-            <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;">
-                {' '.join([f'<div onmouseover="highlightField(\'{item["field_name"]}\', \'{item["color"]}\')" '
-                          f'onmouseout="unhighlightAll()" '
-                          f'style="position: absolute; left: {item["coords"][0]*100}%; top: {item["coords"][1]*100}%; '
-                          f'width: {(item["coords"][2]-item["coords"][0])*100}%; '
-                          f'height: {(item["coords"][3]-item["coords"][1])*100}%; '
-                          f'cursor: pointer;"></div>'
-                         for item in items])}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # JavaScript for interactivity
-    st.markdown("""
     <script>
-    function highlightField(fieldName, color) {
-        // Normalize field ID for DOM
-        const fieldId = fieldName.replace(/ /g, '-').toLowerCase();
-        
-        // Highlight table row
-        const row = document.getElementById('field-row-' + fieldId);
-        if (row) {
-            row.style.backgroundColor = color + '22'; // Add transparency
-        }
-        
-        // Show overlay image for this field on all pages
-        const overlays = document.querySelectorAll('[id^="overlay-"][id$="-' + fieldId + '"]');
-        overlays.forEach(overlay => {
-            overlay.style.opacity = '1';
-        });
+    // Function to highlight a field
+    function highlightField(fieldName) {
+        // Use Streamlit's setComponentValue when available
+        window.parent.postMessage({
+            type: 'streamlit:setComponentValue',
+            value: {
+                highlighted_field: fieldName,
+                trigger: 'highlight'
+            }
+        }, '*');
     }
     
+    // Function to remove all highlights
     function unhighlightAll() {
-        // Reset all table rows
-        const rows = document.querySelectorAll('[id^="field-row-"]');
-        rows.forEach(row => {
-            row.style.backgroundColor = '';
-        });
-        
-        // Hide all overlays
-        const overlays = document.querySelectorAll('[id^="overlay-"]');
-        overlays.forEach(overlay => {
-            overlay.style.opacity = '0';
-        });
+        window.parent.postMessage({
+            type: 'streamlit:setComponentValue',
+            value: {
+                highlighted_field: null,
+                trigger: 'unhighlight'
+            }
+        }, '*');
     }
     </script>
     """, unsafe_allow_html=True)
+    
+    # Check for component value changes from JavaScript
+    query_params = st.experimental_get_query_params()
+    trigger = query_params.get('trigger', [None])[0]
+    
+    if trigger == 'highlight':
+        # Get the field to highlight from query params
+        field_to_highlight = query_params.get('highlighted_field', [None])[0]
+        if field_to_highlight and field_to_highlight in data and field_to_highlight != st.session_state.highlighted_field:
+            st.session_state.highlighted_field = field_to_highlight
+            st.experimental_rerun()
+    elif trigger == 'unhighlight' and st.session_state.highlighted_field is not None:
+        st.session_state.highlighted_field = None
+        st.experimental_rerun()
 
 
 def main():
