@@ -99,31 +99,30 @@ def manage_fields():
 
 def extract_fields_with_openai(text: str, fields: List[Dict[str, str]], chunks: List[Any] = None) -> Dict[str, Any]:
     """Use OpenAI to extract specific fields from text and track source chunks."""
-    field_instructions = "
-".join([
+    # Corrected string literal for newline
+    field_instructions = "\n".join([
         f"- {field['name']}: {field['description']}"
         for field in fields
     ])
     prompt = f"""
-    Extract the following fields from the invoice text below.
-    For each field, use the description to identify the correct information.
-    
-    Fields to extract:
-    {field_instructions}
-    
-    Text:
-    {text}
-    
-    Return the results in JSON format with the following structure for each field:
-    {{
-        "field_name": {{
-            "value": "extracted value"
-        }}
+Extract the following fields from the invoice text below.
+
+Fields to extract:
+{field_instructions}
+
+Text:
+{text}
+
+Return the results in JSON format with the following structure for each field:
+{{
+    "field_name": {{
+        "value": "extracted value"
     }}
-    
-    If a field is not found, set its value to null.
-    Ensure values match the expected format described in the field descriptions.
-    """
+}}
+
+If a field is not found, set its value to null.
+Ensure values match the expected format described in the field descriptions.
+"""
     # Debug print: before sending to OpenAI
     st.write("🔎 Sending prompt to OpenAI…")
     try:
@@ -152,8 +151,6 @@ def extract_fields_with_openai(text: str, fields: List[Dict[str, str]], chunks: 
 
     try:
         extracted_data = json.loads(response.choices[0].message.content)
-        
-        # If chunks are provided, find matching chunks for each extracted field
         if chunks:
             for field_name, field_data in extracted_data.items():
                 if field_data.get('value'):
@@ -165,41 +162,7 @@ def extract_fields_with_openai(text: str, fields: List[Dict[str, str]], chunks: 
                     field_data['matching_chunks'] = matching_chunks
         return extracted_data
     except json.JSONDecodeError:
-        return {field['name']: {'value': None} for field in fields}(text: str, fields: List[Dict[str, str]], chunks: List[Any] = None) -> Dict[str, Any]:
-    instr = "\n".join([f"- {f['name']}: {f['description']}" for f in fields])
-    prompt = f"""
-Extract the following fields from the invoice text below.
-Fields:
-{instr}
-Text:
-{text}
-Return JSON: {{"field_name":{{"value":"..."}}}}, null if not found.
-"""
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[{"role":"system","content":"You are a specialized invoice parser."},
-                      {"role":"user","content":prompt}],
-            temperature=0.1
-        )
-    except InvalidRequestError as e:
-        st.error("🚫 You’ve run out of API credits. Please add more credits to continue.")
-        st.stop()
-    except OpenAIError as e:
-        st.error(f"OpenAI API error: {e}")
-        st.stop()
-
-    try:
-        data = json.loads(response.choices[0].message.content)
-        if chunks:
-            for name, fd in data.items():
-                if fd.get('value'):
-                    val = fd['value'].strip().lower()
-                    matches = [c for c in chunks if val in c.text.lower()]
-                    fd['matching_chunks'] = matches
-        return data
-    except json.JSONDecodeError:
-        return {f['name']:{'value':None} for f in fields}
+        return {field['name']: {'value': None} for field in fields}
 
 
 def convert_pdf_page_to_image(pdf_path: str, page_number: int) -> Image.Image:
@@ -221,7 +184,7 @@ def get_document_image(path: str, idx: int) -> Image.Image:
 def parse_box_string(s: str):
     try:
         parts = s.split()
-        coords = {k:float(v) for part in parts for k,v in [part.split('=')]}
+        coords = {k:float(v) for part in parts for k,v in [part.split('=')]]}
         return [coords[k] for k in ('l','t','r','b')]
     except:
         return None
@@ -254,16 +217,26 @@ def main():
     up = st.file_uploader("Upload document", type=['pdf','png','jpg','jpeg'])
 
     if up and selected and st.button("Extract Fields"):
+        # Debug print: after button press
+        st.write("✅ Button pressed, starting extraction...")
         with st.spinner("Processing..."):
+            # Create a temporary directory for processing
             with tempfile.TemporaryDirectory() as td:
                 path = Path(td)/f"in{up.name}"
                 path.write_bytes(up.getvalue())
-                results = parse_documents([str(path)])
-                if not results: st.error("Parse returned nothing"); return
+                # Debug: before parsing
+                st.write("✅ Received file, calling parse_documents() with timeout=30...")
+                try:
+                    results = parse_documents([str(path)], timeout=30)
+                    st.write("✅ parse_documents() returned")
+                except Exception as e:
+                    st.error(f"❌ parse_documents error: {e}")
+                    st.stop()
+
                 doc = results[0]
                 text = "\n".join(c.text for c in doc.chunks)
                 if translate:
-                    text = text  # translation logic here if needed
+                    text = text  # translation logic here
                 data = extract_fields_with_openai(text, selected, doc.chunks)
                 for nm, fd in data.items():
                     if fd.get('value'):
