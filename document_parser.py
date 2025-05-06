@@ -726,8 +726,11 @@ def main():
         
         # Initialize session state for directory browsing
         if 'current_dir' not in st.session_state:
-            # Start from user's home directory by default
-            st.session_state.current_dir = os.path.expanduser('~')  # This points to the user's home folder on their PC
+            # Start from C: drive by default on Windows, or root directory on other systems
+            if os.name == 'nt':  # Windows
+                st.session_state.current_dir = "C:\\"
+            else:  # macOS, Linux, etc.
+                st.session_state.current_dir = "/"
         
         # Show current directory with text input for manual editing
         with col1:
