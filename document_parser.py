@@ -644,7 +644,7 @@ def estimate_processing_time(total_kb):
 
 
 def main():
-    st.set_page_config(layout="wide", page_title="Document Field Extractor")
+    st.set_page_config(layout="wide", page_title="Invoice Field Extractor & Comparator")
     
     # Add custom CSS for the overall page
     st.markdown("""
@@ -661,8 +661,33 @@ def main():
     if client is None:
         st.stop()
     
-    # Create the three-frame layout
-    st.markdown("# 📄 Document Field Extractor")
+    # Create the main layout
+    st.markdown("# 📄 Invoice Field Extractor & Comparator")
+    
+    # First select processing option at the top
+    def processing_option_selection():
+        st.markdown("### Select Processing Method")
+        
+        process_option = st.radio(
+            "Choose processing option:",
+            ["Option 1: Extract desired field information only",
+             "Option 2: Extract and Compare fields against reference document"]
+        )
+        
+        # Store the process option in session state to control field display
+        st.session_state['process_option'] = process_option
+        
+        if "Option 1" in process_option:
+            vis_option = st.radio(
+                "Choose visualization style:",
+                ["Show each field with corresponding reference image",
+                 "Show multiple color-coded bounding boxes per document"],
+                key="vis_option"
+            )
+        
+        return process_option
+    
+    process_option = create_frame_with_border("Processing Options", processing_option_selection)
     
     # Split the screen into top and bottom frames
     top_container = st.container()
@@ -677,12 +702,12 @@ def main():
             def left_frame_content():
                 st.markdown("### Documents to Process")
                 source_files = st.file_uploader("Upload documents to check", 
-                                              type=['pdf', 'png', 'jpg', 'jpeg'], 
-                                              accept_multiple_files=True,
-                                              key="source_files")
+                                             type=['pdf', 'png', 'jpg', 'jpeg'], 
+                                             accept_multiple_files=True,
+                                             key="source_files")
                 
                 # Only show fields management if we're in Option 1 mode
-                if 'process_option' not in st.session_state or "Option 1" in st.session_state.get('process_option', ''):
+                if "Option 1" in st.session_state.get('process_option', ''):
                     source_selected = manage_fields(st.container(), "source")
                 else:
                     # Just initialize empty fields if in Option 2 mode
@@ -702,33 +727,23 @@ def main():
                                                 type=['pdf', 'png', 'jpg', 'jpeg'], 
                                                 accept_multiple_files=True,
                                                 key="reference_files")
-                reference_selected = manage_fields(st.container(), "reference")
+                
+                # Show field management in right frame for Option 2
+                if "Option 2" in st.session_state.get('process_option', ''):
+                    reference_selected = manage_fields(st.container(), "reference")
+                else:
+                    # Just initialize reference fields but don't display them for Option 1
+                    if 'reference_extraction_fields' not in st.session_state:
+                        st.session_state['reference_extraction_fields'] = get_reference_default_fields()
+                    reference_selected = []
+                
                 return reference_files, reference_selected
             
             reference_files, reference_selected = create_frame_with_border("Reference Files", right_frame_content)
     
-    # Bottom frame (Processing Options)
+    # Bottom container for processing and results
     with bottom_container:
         def bottom_frame_content():
-            st.markdown("### Select Processing Method")
-            
-            process_option = st.radio(
-                "Choose processing option:",
-                ["Option 1: Extract desired field information only",
-                 "Option 2: Extract and Compare fields against reference document"]
-            )
-            
-            # Store the process option in session state to control field display
-            st.session_state['process_option'] = process_option
-            
-            if "Option 1" in process_option:
-                vis_option = st.radio(
-                    "Choose visualization style:",
-                    ["Show each field with corresponding reference image",
-                     "Show multiple color-coded bounding boxes per document"],
-                    key="vis_option"
-                )
-            
             # Add estimated processing time calculation
             if source_files or reference_files:
                 total_kb = 0
@@ -742,12 +757,10 @@ def main():
                     minutes_estimate = estimate_processing_time(total_kb)
                     st.info(f"📊 Estimated processing time: approximately {minutes_estimate} minute{'s' if minutes_estimate != 1 else ''}")
             
-            return process_option
+            # Process button
+            return st.button("Process Documents")
         
-        process_option = create_frame_with_border("Processing Options", bottom_frame_content)
-        
-        # Add spacer
-        st.markdown("---")
+        process_button = create_frame_with_border("Process Documents", bottom_frame_content)
         
         # Process button
         if st.button("Process Documents"):
