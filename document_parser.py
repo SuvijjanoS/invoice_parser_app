@@ -357,6 +357,215 @@ def display_unified_evidence(data: Dict[str, Any], path: str):
         st.image(final_img, caption=f"Page {page_idx + 1} with all extracted fields")
 
 
+def create_interactive_view(data: Dict[str, Any], path: str):
+    """Create an interactive view with mouse-over highlighting."""
+    # Prepare data for interactive display
+    field_data = []
+    color_map = {}
+    field_coords = {}
+    
+    # Process data and create mappings
+    for idx, (field_name, field_info) in enumerate(data.items()):
+        if field_info.get('value') and field_info.get('matching_chunks'):
+            color_idx = idx % len(COLORS)
+            color = COLORS[color_idx]
+            color_map[field_name] = color
+            
+            # RGB to hex for CSS
+            hex_color = "#{:02x}{:02x}{:02x}".format(*color)
+            
+            # Store field data
+            field_data.append({
+                'name': field_name,
+                'value': field_info['value'],
+                'color': hex_color
+            })
+            
+            # Get coordinates for each field
+            chunk = field_info['matching_chunks'][0]
+            coords_list = get_chunk_coordinates(chunk, path)
+            
+            if coords_list:
+                field_coords[field_name] = coords_list
+    
+    # Group coordinate data by page
+    page_data = defaultdict(list)
+    for field_name, coords_list in field_coords.items():
+        for coord_item in coords_list:
+            page_data[coord_item['page_idx']].append({
+                'field_name': field_name,
+                'coords': coord_item['coords'],
+                'color': color_map[field_name]
+            })
+    
+    # Create professional-looking table with CSS
+    st.markdown("""
+    <style>
+    .highlight-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    .highlight-table th {
+        background-color: #f2f2f2;
+        padding: 12px 15px;
+        text-align: left;
+        font-weight: bold;
+        border-bottom: 1px solid #ddd;
+    }
+    .highlight-table td {
+        padding: 10px 15px;
+        border-bottom: 1px solid #ddd;
+    }
+    .highlight-table tr:last-child td {
+        border-bottom: none;
+    }
+    .highlight-table tr:hover {
+        background-color: #f9f9f9;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Build the interactive table
+    table_html = """
+    <div class="highlight-table-container">
+    <table class="highlight-table">
+        <thead>
+            <tr>
+                <th>Field</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+    """
+    
+    for field in field_data:
+        table_html += f"""
+        <tr id="field-row-{field['name'].replace(' ', '-').lower()}" 
+            onmouseover="highlightField('{field['name']}', '{field['color']}')" 
+            onmouseout="unhighlightAll()">
+            <td>{field['name']}</td>
+            <td>{field['value']}</td>
+        </tr>
+        """
+    
+    table_html += """
+        </tbody>
+    </table>
+    </div>
+    """
+    
+    # Display the table
+    st.markdown("### Extracted Fields")
+    st.markdown(table_html, unsafe_allow_html=True)
+    
+    # Prepare document images for each page
+    st.markdown("### Document View")
+    
+    # For each page with data
+    for page_idx, items in page_data.items():
+        img = get_document_image(path, page_idx)
+        if not img:
+            continue
+            
+        # Save base image and create image for each field
+        img_path = f"page_{page_idx}.png"
+        img.save(img_path)
+        
+        # Create overlay images for each field
+        field_images = {}
+        for item in items:
+            field_name = item['field_name']
+            if field_name not in field_images:
+                overlay_img = img.copy()
+                field_images[field_name] = {
+                    'path': f"page_{page_idx}_{field_name.replace(' ', '_').lower()}.png",
+                    'image': overlay_img,
+                    'color': item['color']
+                }
+        
+        # Draw bounding boxes on each field's image
+        for item in items:
+            field_name = item['field_name']
+            coords = item['coords']
+            
+            # Add bounding box to the field's image
+            field_images[field_name]['image'] = draw_bounding_box(
+                field_images[field_name]['image'], 
+                coords, 
+                color=item['color'], 
+                label=field_name
+            )
+        
+        # Save all field overlay images
+        for field_name, img_data in field_images.items():
+            img_data['image'].save(img_data['path'])
+        
+        # Create interactive overlay container
+        st.markdown(f"""
+        <div style="position: relative; width: 100%;">
+            <img id="base-image-{page_idx}" src="file://{os.path.abspath(img_path)}" 
+                 style="width: 100%; display: block;">
+            
+            <!-- Overlay images for each field -->
+            {' '.join([f'<img id="overlay-{page_idx}-{field_name.replace(" ", "-").lower()}" '
+                      f'src="file://{os.path.abspath(img_data["path"])}" '
+                      f'style="position: absolute; top: 0; left: 0; width: 100%; opacity: 0; pointer-events: none;">'
+                     for field_name, img_data in field_images.items()])}
+            
+            <!-- Clickable areas for each field -->
+            <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;">
+                {' '.join([f'<div onmouseover="highlightField(\'{item["field_name"]}\', \'{item["color"]}\')" '
+                          f'onmouseout="unhighlightAll()" '
+                          f'style="position: absolute; left: {item["coords"][0]*100}%; top: {item["coords"][1]*100}%; '
+                          f'width: {(item["coords"][2]-item["coords"][0])*100}%; '
+                          f'height: {(item["coords"][3]-item["coords"][1])*100}%; '
+                          f'cursor: pointer;"></div>'
+                         for item in items])}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # JavaScript for interactivity
+    st.markdown("""
+    <script>
+    function highlightField(fieldName, color) {
+        // Normalize field ID for DOM
+        const fieldId = fieldName.replace(/ /g, '-').toLowerCase();
+        
+        // Highlight table row
+        const row = document.getElementById('field-row-' + fieldId);
+        if (row) {
+            row.style.backgroundColor = color + '22'; // Add transparency
+        }
+        
+        // Show overlay image for this field on all pages
+        const overlays = document.querySelectorAll('[id^="overlay-"][id$="-' + fieldId + '"]');
+        overlays.forEach(overlay => {
+            overlay.style.opacity = '1';
+        });
+    }
+    
+    function unhighlightAll() {
+        // Reset all table rows
+        const rows = document.querySelectorAll('[id^="field-row-"]');
+        rows.forEach(row => {
+            row.style.backgroundColor = '';
+        });
+        
+        // Hide all overlays
+        const overlays = document.querySelectorAll('[id^="overlay-"]');
+        overlays.forEach(overlay => {
+            overlay.style.opacity = '0';
+        });
+    }
+    </script>
+    """, unsafe_allow_html=True)
+
+
 def main():
     st.set_page_config(layout="wide")
     st.title("📄 Invoice Field Extractor")
@@ -367,14 +576,14 @@ def main():
         st.stop()
 
     selected = manage_fields()
-    translate = st.checkbox("Translate Thai→English", value=False)
     
     # Add visualization options
     st.subheader("Visualization Options")
     vis_option = st.radio(
         "Choose how to display extracted fields:",
         ["Option 1: Output each field with corresponding reference image",
-         "Option 2: Multiple color-coded bounding boxes per reference document"]
+         "Option 2: Multiple color-coded bounding boxes per reference document",
+         "Option 3: Highlight on mouse-over (interactive table and document view)"]
     )
     
     up = st.file_uploader("Upload document", type=['pdf', 'png', 'jpg', 'jpeg'])
@@ -388,7 +597,7 @@ def main():
                 
                 if agentic_imported:
                     try:
-                        # Parse documents - no timeout parameter needed
+                        # Parse documents
                         results = parse_documents([str(path)])
                     except Exception as e:
                         st.error(f"Error during document parsing: {e}")
@@ -396,10 +605,7 @@ def main():
 
                     doc = results[0]
                     text = "\n".join(c.text for c in doc.chunks)
-                    if translate:
-                        # Placeholder for translation logic
-                        st.warning("Translation functionality not implemented yet")
-                        
+                    
                     data = extract_fields_with_openai(client, text, selected, doc.chunks)
                     
                     # Display results based on selected visualization option
@@ -413,7 +619,7 @@ def main():
                                     color_idx = idx % len(COLORS)
                                     display_chunk_evidence(fd['matching_chunks'][0], nm, str(path), COLORS[color_idx])
                     
-                    else:  # Option 2 - Combined visualization
+                    elif "Option 2" in vis_option:  # Combined visualization
                         st.subheader("Extracted Field Values")
                         # Display field values in a more compact format first
                         cols = st.columns(3)
@@ -424,6 +630,10 @@ def main():
                         
                         # Then show the unified visualization
                         display_unified_evidence(data, str(path))
+                    
+                    elif "Option 3" in vis_option:  # Interactive mouse-over
+                        # Create the interactive view
+                        create_interactive_view(data, str(path))
                         
                 else:
                     st.error("Cannot process without agentic_doc package. Please install it.")
