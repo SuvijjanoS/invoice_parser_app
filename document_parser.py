@@ -683,7 +683,7 @@ def main():
     st.header("Document Upload")
     upload_option = st.radio(
         "Choose upload method:",
-        ["Upload files", "Select local directory"]
+        ["Upload files", "Use files from specified path"]
     )
     
     # Store processed files in session state
@@ -718,85 +718,64 @@ def main():
                     if results:
                         st.session_state.processed_results = results
     
-    else:  # Select local directory
-        st.header("Local Directory Selection")
+    else:  # Use files from specified path
+        st.header("Process Files from Local Path")
         
-        # Create columns for folder browser components
-        col1, col2 = st.columns([3, 1])
+        # Input field for path
+        path_input = st.text_input(
+            "Enter full path to folder containing your documents:",
+            placeholder="e.g., C:\\Users\\YourName\\Documents\\Invoices"
+        )
         
-        # Initialize session state for directory browsing
-        if 'current_dir' not in st.session_state:
-            # Start from C: drive by default on Windows, or root directory on other systems
-            if os.name == 'nt':  # Windows
-                st.session_state.current_dir = "C:\\"
-            else:  # macOS, Linux, etc.
-                st.session_state.current_dir = "/"
+        # Show supported file types
+        st.info("Supported file types: PDF, PNG, JPG, JPEG, TIFF, TIF, BMP")
         
-        # Show current directory with text input for manual editing
-        with col1:
-            typed_path = st.text_input("Current directory:", value=st.session_state.current_dir)
-            if typed_path != st.session_state.current_dir and os.path.isdir(typed_path):
-                st.session_state.current_dir = typed_path
+        # Instructions for the user
+        st.markdown("""
+        **Instructions:**
+        1. Enter the full path to the folder containing your documents
+        2. Make sure the path is accessible to this application
+        3. Click 'Check Path' to validate and list files
+        """)
         
-        # Navigation buttons
-        with col2:
-            if st.button("Parent Directory"):
-                parent = os.path.dirname(st.session_state.current_dir)
-                if os.path.isdir(parent):
-                    st.session_state.current_dir = parent
-                    st.rerun()
-        
-        # List directories and files
-        try:
-            items = sorted(os.listdir(st.session_state.current_dir))
-            directories = [d for d in items if os.path.isdir(os.path.join(st.session_state.current_dir, d))]
-            
-            # Show directories as buttons
-            st.header("Directories")
-            dir_cols = st.columns(3)
-            for i, directory in enumerate(directories):
-                with dir_cols[i % 3]:
-                    if st.button(f"📁 {directory}"):
-                        new_path = os.path.join(st.session_state.current_dir, directory)
-                        if os.path.isdir(new_path):
-                            st.session_state.current_dir = new_path
-                            st.rerun()
-            
-            # Use this directory button
-            if st.button("Use this directory", type="primary"):
-                directory_path = st.session_state.current_dir
-                valid_files, invalid_files = check_directory_files(directory_path)
-                
-                if invalid_files:
-                    st.warning(f"Found {len(invalid_files)} invalid file types. Only PDF and image files will be processed.")
-                    with st.expander("Show invalid files"):
-                        for file in invalid_files[:10]:  # Show first 10 invalid files
-                            st.write(f"- {os.path.basename(file)}")
-                        if len(invalid_files) > 10:
-                            st.write(f"...and {len(invalid_files) - 10} more")
+        # Check path button
+        if path_input and st.button("Check Path"):
+            if os.path.exists(path_input) and os.path.isdir(path_input):
+                valid_files, invalid_files = check_directory_files(path_input)
                 
                 if valid_files:
-                    st.success(f"Found {len(valid_files)} valid files ready for processing.")
+                    st.success(f"Found {len(valid_files)} valid documents in the specified folder.")
                     
-                    # Store valid files in session state
-                    st.session_state.valid_directory_files = valid_files
+                    # Display list of valid files
+                    with st.expander("View valid files"):
+                        for file in valid_files:
+                            st.write(f"- {os.path.basename(file)}")
                     
-                    # Show extract button only if valid files found
-                    if valid_files and st.button("Extract Fields from Directory"):
+                    # Store found files in session state
+                    st.session_state.found_files = valid_files
+                    
+                    # Process files button
+                    if st.button("Process Files"):
                         st.session_state.processed_results = []  # Reset previous results
                         
                         with st.spinner("Processing files..."):
                             results = process_multiple_files(client, valid_files, selected)
                             if results:
                                 st.session_state.processed_results = results
-                else:
-                    st.error("No valid files (PDF or images) found in this directory.")
                 
-        except PermissionError:
-            st.error("Permission denied. Cannot access this directory.")
-        except Exception as e:
-            st.error(f"Error accessing directory: {e}")
-    
+                elif invalid_files:
+                    st.warning(f"Found {len(invalid_files)} files, but none are supported document types.")
+                    with st.expander("View invalid files"):
+                        for file in invalid_files[:10]:
+                            st.write(f"- {os.path.basename(file)}")
+                        if len(invalid_files) > 10:
+                            st.write(f"...and {len(invalid_files) - 10} more")
+                
+                else:
+                    st.error("The specified folder is empty.")
+            
+            else:
+                st.error("Invalid path. Please enter a valid folder path.")    
     # Display results if available
     if st.session_state.processed_results:
         # Create color mapping
