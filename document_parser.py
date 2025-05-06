@@ -7,39 +7,57 @@ import re
 import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
-from openai.error import InvalidRequestError, OpenAIError
-from agentic_doc.parse import parse_documents
-from agentic_doc.config import Settings
-from PIL import Image, ImageDraw
+from openai.types.error import APIError
 import fitz  # PyMuPDF for PDF handling
 from typing import List, Dict, Any, Tuple
+from PIL import Image, ImageDraw
+
+# Conditionally import agentic_doc if available
+try:
+    from agentic_doc.parse import parse_documents
+    from agentic_doc.config import Settings
+    agentic_imported = True
+except ImportError:
+    agentic_imported = False
+    st.error("⚠️ agentic_doc package not installed. Please install it with `pip install agentic_doc`")
 
 # Load local .env for development; secrets will override in cloud
 load_dotenv()
 
 # Fetch API keys: prefer Streamlit secrets, fallback to environment
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-VISION_AGENT_API_KEY = st.secrets.get("VISION_AGENT_API_KEY") or os.getenv("VISION_AGENT_API_KEY")
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+VISION_AGENT_API_KEY = st.secrets.get("VISION_AGENT_API_KEY", os.getenv("VISION_AGENT_API_KEY"))
 
-if not OPENAI_API_KEY or not VISION_AGENT_API_KEY:
-    st.error(
-        "🔑 API keys missing!\n\n"
-        "Please go to your Streamlit Cloud app’s Settings → Secrets, and add:\n"
-        "  • OPENAI_API_KEY = <your OpenAI key>\n"
-        "  • VISION_AGENT_API_KEY = <your Agentic Doc key>\n"
-    )
-    st.stop()
-
-# Initialize clients
-client = OpenAI(api_key=OPENAI_API_KEY)
-settings = Settings(
-    vision_agent_api_key=VISION_AGENT_API_KEY,
-    batch_size=4,
-    max_workers=5,
-    max_retries=100,
-    max_retry_wait_time=60,
-    retry_logging_style="log_msg"
-)
+def initialize_clients():
+    if not OPENAI_API_KEY:
+        st.error(
+            "🔑 OpenAI API key missing!\n\n"
+            "Please go to your Streamlit Cloud app's Settings → Secrets, and add:\n"
+            "  • OPENAI_API_KEY = <your OpenAI key>\n"
+        )
+        return None
+    
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    
+    if agentic_imported and not VISION_AGENT_API_KEY:
+        st.error(
+            "🔑 Vision Agent API key missing!\n\n"
+            "Please go to your Streamlit Cloud app's Settings → Secrets, and add:\n"
+            "  • VISION_AGENT_API_KEY = <your Agentic Doc key>\n"
+        )
+        return None
+    
+    if agentic_imported:
+        settings = Settings(
+            vision_agent_api_key=VISION_AGENT_API_KEY,
+            batch_size=4,
+            max_workers=5,
+            max_retries=100,
+            max_retry_wait_time=60,
+            retry_logging_style="log_msg"
+        )
+    
+    return client
 
 # Helper functions
 
@@ -97,7 +115,7 @@ def manage_fields():
     return [fld for i, fld in enumerate(st.session_state.extraction_fields) if st.session_state.get(f"ext_{i}", True)]
 
 
-def extract_fields_with_openai(text: str, fields: List[Dict[str, str]], chunks: List[Any] = None) -> Dict[str, Any]:
+def extract_fields_with_openai(client, text: str, fields: List[Dict[str, str]], chunks: List[Any] = None) -> Dict[str, Any]:
     """Use OpenAI to extract specific fields from text and track source chunks."""
     # Corrected string literal for newline
     field_instructions = "\n".join([
@@ -134,16 +152,15 @@ Ensure values match the expected format described in the field descriptions.
             ],
             temperature=0.1
         )
-    except InvalidRequestError as e:
-        status = getattr(e, 'http_status', None)
-        code = getattr(e, 'code', None)
-        if status == 402 or code == 'insufficient_quota':
-            st.error("🚫 You’ve run out of API credits. Please add more credits to continue.")
+    except APIError as e:
+        status = getattr(e, 'status_code', None)
+        if status == 402:
+            st.error("🚫 You've run out of API credits. Please add more credits to continue.")
             st.stop()
         else:
             st.error(f"Invalid request to OpenAI API: {e}")
             st.stop()
-    except OpenAIError as e:
+    except Exception as e:
         st.error(f"OpenAI API error: {e}")
         st.stop()
     # Debug print: after receiving from OpenAI
@@ -184,27 +201,33 @@ def get_document_image(path: str, idx: int) -> Image.Image:
 def parse_box_string(s: str):
     try:
         parts = s.split()
-        coords = {k:float(v) for part in parts for k,v in [part.split('=')]]}
-        return [coords[k] for k in ('l','t','r','b')]
-    except:
+        coords = {k: float(v) for part in parts for k, v in [part.split('=')]}
+        return [coords[k] for k in ('l', 't', 'r', 'b')]
+    except Exception as e:
+        st.error(f"Error parsing box string: {s}, {e}")
         return None
 
 
 def draw_bounding_box(img: Image.Image, box: List[float]) -> Image.Image:
-    out = img.copy(); d=ImageDraw.Draw(out)
-    w,h = out.size; x0,y0,x1,y1 = [int(c*dim) for c,dim in zip(box,[w,h,w,h])]
-    d.rectangle([x0,y0,x1,y1], outline=(255,0,0), width=2)
+    out = img.copy()
+    d = ImageDraw.Draw(out)
+    w, h = out.size
+    x0, y0, x1, y1 = [int(c*dim) for c, dim in zip(box, [w, h, w, h])]
+    d.rectangle([x0, y0, x1, y1], outline=(255, 0, 0), width=2)
     return out
 
 
 def display_chunk_evidence(chunk, name: str, path: str):
-    if hasattr(chunk,'grounding'):
+    if hasattr(chunk, 'grounding'):
         for g in chunk.grounding:
-            box = getattr(g,'box',None)
-            coords = parse_box_string(box) if isinstance(box,str) else getattr(box,'l',None) and [box.l,box.t,box.r,box.b]
+            box = getattr(g, 'box', None)
+            coords = parse_box_string(box) if isinstance(box, str) else (
+                getattr(box, 'l', None) is not None and [box.l, box.t, box.r, box.b]
+            )
             if coords:
-                img = get_document_image(path, getattr(g,'page_idx',0))
-                if img: st.image(draw_bounding_box(img, coords))
+                img = get_document_image(path, getattr(g, 'page_idx', 0))
+                if img: 
+                    st.image(draw_bounding_box(img, coords))
 
 
 def main():
@@ -212,9 +235,13 @@ def main():
     st.title("📄 Invoice Field Extractor")
     st.write("Upload an invoice to extract fields.")
 
+    client = initialize_clients()
+    if client is None:
+        st.stop()
+
     selected = manage_fields()
     translate = st.checkbox("Translate Thai→English", value=False)
-    up = st.file_uploader("Upload document", type=['pdf','png','jpg','jpeg'])
+    up = st.file_uploader("Upload document", type=['pdf', 'png', 'jpg', 'jpeg'])
 
     if up and selected and st.button("Extract Fields"):
         # Debug print: after button press
@@ -222,29 +249,36 @@ def main():
         with st.spinner("Processing..."):
             # Create a temporary directory for processing
             with tempfile.TemporaryDirectory() as td:
-                path = Path(td)/f"in{up.name}"
+                path = Path(td) / f"in{up.name}"
                 path.write_bytes(up.getvalue())
-                # Debug: before parsing
-                st.write("✅ Received file, calling parse_documents() with timeout=30...")
-                try:
-                    results = parse_documents([str(path)], timeout=30)
-                    st.write("✅ parse_documents() returned")
-                except Exception as e:
-                    st.error(f"❌ parse_documents error: {e}")
-                    st.stop()
+                
+                if agentic_imported:
+                    # Debug: before parsing
+                    st.write("✅ Received file, calling parse_documents() with timeout=30...")
+                    try:
+                        results = parse_documents([str(path)], timeout=30)
+                        st.write("✅ parse_documents() returned")
+                    except Exception as e:
+                        st.error(f"❌ parse_documents error: {e}")
+                        st.stop()
 
-                doc = results[0]
-                text = "\n".join(c.text for c in doc.chunks)
-                if translate:
-                    text = text  # translation logic here
-                data = extract_fields_with_openai(text, selected, doc.chunks)
-                for nm, fd in data.items():
-                    if fd.get('value'):
-                        c1,c2 = st.columns([1,3])
-                        with c1: st.markdown(f"**{nm}:** {fd['value']}")
-                        with c2:
-                            if fd.get('matching_chunks'):
-                                display_chunk_evidence(fd['matching_chunks'][0], nm, str(path))
+                    doc = results[0]
+                    text = "\n".join(c.text for c in doc.chunks)
+                    if translate:
+                        # Placeholder for translation logic
+                        st.warning("Translation functionality not implemented yet")
+                        
+                    data = extract_fields_with_openai(client, text, selected, doc.chunks)
+                    for nm, fd in data.items():
+                        if fd.get('value'):
+                            c1, c2 = st.columns([1, 3])
+                            with c1: 
+                                st.markdown(f"**{nm}:** {fd['value']}")
+                            with c2:
+                                if fd.get('matching_chunks'):
+                                    display_chunk_evidence(fd['matching_chunks'][0], nm, str(path))
+                else:
+                    st.error("Cannot process without agentic_doc package. Please install it.")
 
 if __name__ == "__main__":
     main()
