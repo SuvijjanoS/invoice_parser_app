@@ -7,10 +7,21 @@ import re
 import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
-from openai.types.error import APIError
 import fitz  # PyMuPDF for PDF handling
 from typing import List, Dict, Any, Tuple
 from PIL import Image, ImageDraw
+
+# Handle different versions of OpenAI package
+try:
+    from openai.types.error import APIError
+except ImportError:
+    try:
+        from openai.error import APIError, InvalidRequestError, OpenAIError
+    except ImportError:
+        # Define fallback error classes if needed
+        class APIError(Exception): pass
+        class InvalidRequestError(Exception): pass
+        class OpenAIError(Exception): pass
 
 # Conditionally import agentic_doc if available
 try:
@@ -152,17 +163,17 @@ Ensure values match the expected format described in the field descriptions.
             ],
             temperature=0.1
         )
-    except APIError as e:
-        status = getattr(e, 'status_code', None)
-        if status == 402:
+    except Exception as e:
+        # Try to handle different error structures
+        status = getattr(e, 'status_code', None) or getattr(e, 'http_status', None)
+        code = getattr(e, 'code', None)
+        
+        if status == 402 or code == 'insufficient_quota':
             st.error("🚫 You've run out of API credits. Please add more credits to continue.")
             st.stop()
         else:
-            st.error(f"Invalid request to OpenAI API: {e}")
+            st.error(f"OpenAI API error: {e}")
             st.stop()
-    except Exception as e:
-        st.error(f"OpenAI API error: {e}")
-        st.stop()
     # Debug print: after receiving from OpenAI
     st.write("✅ OpenAI replied, processing response…")
 
