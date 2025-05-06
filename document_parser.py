@@ -644,7 +644,7 @@ def estimate_processing_time(total_kb):
 
 
 def main():
-    st.set_page_config(layout="wide", page_title="Invoice Field Extractor & Comparator")
+    st.set_page_config(layout="wide", page_title="Document Field Extractor")
     
     # Add custom CSS for the overall page
     st.markdown("""
@@ -662,7 +662,7 @@ def main():
         st.stop()
     
     # Create the three-frame layout
-    st.markdown("# 📄 Invoice Field Extractor & Comparator")
+    st.markdown("# 📄 Document Field Extractor")
     
     # Split the screen into top and bottom frames
     top_container = st.container()
