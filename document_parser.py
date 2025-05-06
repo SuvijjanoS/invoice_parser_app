@@ -129,7 +129,6 @@ def manage_fields():
 
 def extract_fields_with_openai(client, text: str, fields: List[Dict[str, str]], chunks: List[Any] = None) -> Dict[str, Any]:
     """Use OpenAI to extract specific fields from text and track source chunks."""
-    # Corrected string literal for newline
     field_instructions = "\n".join([
         f"- {field['name']}: {field['description']}"
         for field in fields
@@ -153,8 +152,6 @@ Return the results in JSON format with the following structure for each field:
 If a field is not found, set its value to null.
 Ensure values match the expected format described in the field descriptions.
 """
-    # Debug print: before sending to OpenAI
-    st.write("🔎 Sending prompt to OpenAI…")
     try:
         response = client.chat.completions.create(
             model="gpt-4",
@@ -165,7 +162,7 @@ Ensure values match the expected format described in the field descriptions.
             temperature=0.1
         )
     except Exception as e:
-        # Try to handle different error structures
+        # Handle different error structures
         status = getattr(e, 'status_code', None) or getattr(e, 'http_status', None)
         code = getattr(e, 'code', None)
         
@@ -175,8 +172,6 @@ Ensure values match the expected format described in the field descriptions.
         else:
             st.error(f"OpenAI API error: {e}")
             st.stop()
-    # Debug print: after receiving from OpenAI
-    st.write("✅ OpenAI replied, processing response…")
 
     try:
         extracted_data = json.loads(response.choices[0].message.content)
@@ -256,8 +251,6 @@ def main():
     up = st.file_uploader("Upload document", type=['pdf', 'png', 'jpg', 'jpeg'])
 
     if up and selected and st.button("Extract Fields"):
-        # Debug print: after button press
-        st.write("✅ Button pressed, starting extraction...")
         with st.spinner("Processing..."):
             # Create a temporary directory for processing
             with tempfile.TemporaryDirectory() as td:
@@ -265,14 +258,11 @@ def main():
                 path.write_bytes(up.getvalue())
                 
                 if agentic_imported:
-                    # Debug: before parsing
-                    st.write("✅ Received file, calling parse_documents()...")
                     try:
-                        # Call parse_documents without the timeout parameter
+                        # Parse documents - no timeout parameter needed
                         results = parse_documents([str(path)])
-                        st.write("✅ parse_documents() returned")
                     except Exception as e:
-                        st.error(f"❌ parse_documents error: {e}")
+                        st.error(f"Error during document parsing: {e}")
                         st.stop()
 
                     doc = results[0]
