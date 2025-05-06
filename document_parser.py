@@ -4,6 +4,8 @@ import json
 import tempfile
 import re
 import random
+import time
+from datetime import timedelta
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -220,6 +222,22 @@ def convert_pdf_page_to_image(pdf_path: str, page_number: int) -> Image.Image:
         return None
 
 
+def convert_pdf_to_images(pdf_path: str) -> List[Image.Image]:
+    """Convert all pages of a PDF to a list of PIL Images."""
+    images = []
+    try:
+        doc = fitz.open(pdf_path)
+        for page_num in range(len(doc)):
+            pix = doc[page_num].get_pixmap(matrix=fitz.Matrix(2,2))
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            images.append(img)
+        doc.close()
+        return images
+    except Exception as e:
+        st.error(f"Error converting PDF to images: {e}")
+        return []
+
+
 def get_document_image(path: str, idx: int) -> Image.Image:
     return convert_pdf_page_to_image(path, idx) if path.lower().endswith('.pdf') else Image.open(path)
 
@@ -375,10 +393,24 @@ def display_unified_evidence(data: Dict[str, Any], path: str):
         st.image(final_img, caption=f"Page {page_idx + 1} with all extracted fields")
 
 
+def save_image_file(img: Image.Image, temp_dir: Path, filename: str) -> Path:
+    """Save a PIL Image to a temporary file."""
+    out_path = temp_dir / filename
+    img.save(out_path)
+    return out_path
+
+
+def format_time(seconds: float) -> str:
+    """Format seconds into minutes and seconds."""
+    minutes = int(seconds // 60)
+    seconds = seconds % 60
+    return f"{minutes} mins {seconds:.2f} secs"
+
+
 def main():
     st.set_page_config(layout="wide")
     st.title("📄 Invoice Field Extractor")
-    st.write("Upload an invoice to extract fields.")
+    st.write("Upload invoices to extract fields.")
 
     client = initialize_clients()
     if client is None:
@@ -394,44 +426,111 @@ def main():
          "Option 2: Multiple color-coded bounding boxes per reference document"]
     )
     
-    up = st.file_uploader("Upload document", type=['pdf', 'png', 'jpg', 'jpeg'])
+    # Allow multiple file uploads
+    uploaded_files = st.file_uploader("Upload documents", type=['pdf', 'png', 'jpg', 'jpeg'], accept_multiple_files=True)
 
-    if up and selected and st.button("Extract Fields"):
-        with st.spinner("Processing..."):
-            # Create a temporary directory for processing
-            with tempfile.TemporaryDirectory() as td:
-                path = Path(td) / f"in{up.name}"
-                path.write_bytes(up.getvalue())
+    if uploaded_files and selected and st.button("Extract Fields"):
+        total_kb = sum(file.size / 1024 for file in uploaded_files)
+        st.write(f"Total file size: {total_kb:.2f} KB")
+        
+        # Initialize processing metrics
+        start_time = time.time()
+        
+        # Create a progress bar
+        progress_bar = st.progress(0)
+        progress_text = st.empty()
+        
+        # Create a temporary directory for processing
+        with tempfile.TemporaryDirectory() as td:
+            temp_dir = Path(td)
+            
+            # Process each file
+            for file_idx, uploaded_file in enumerate(uploaded_files):
+                progress_text.text(f"Processing file {file_idx + 1}/{len(uploaded_files)}: {uploaded_file.name}")
+                progress_bar.progress((file_idx) / len(uploaded_files))
                 
-                if agentic_imported:
-                    try:
-                        # Parse documents - no timeout parameter needed
-                        results = parse_documents([str(path)])
-                    except Exception as e:
-                        st.error(f"Error during document parsing: {e}")
-                        st.stop()
-
-                    doc = results[0]
-                    text = "\n".join(c.text for c in doc.chunks)
+                # Save uploaded file to temp directory
+                original_path = temp_dir / f"original_{uploaded_file.name}"
+                original_path.write_bytes(uploaded_file.getvalue())
+                
+                file_paths_to_process = []
+                
+                # If PDF, convert to images first
+                if uploaded_file.name.lower().endswith('.pdf'):
+                    images = convert_pdf_to_images(str(original_path))
                     
-                    data = extract_fields_with_openai(client, text, selected, doc.chunks)
-                    
-                    # Display results based on selected visualization option
-                    if "Option 1" in vis_option:  # Original method - one image per field
-                        st.subheader("Extracted Fields with Individual Images")
-                        for idx, (nm, fd) in enumerate(data.items()):
-                            if fd.get('value'):
-                                st.markdown(f"### {nm}: {fd['value']}")
-                                if fd.get('matching_chunks'):
-                                    # Get color for this field
-                                    color_idx = idx % len(COLORS)
-                                    display_chunk_evidence(fd['matching_chunks'][0], nm, str(path), COLORS[color_idx])
-                    
-                    else:  # Option 2 - Combined visualization with improved tabular display
-                        display_unified_evidence(data, str(path))
-                        
+                    # Save each page as an image file
+                    for i, img in enumerate(images):
+                        img_path = save_image_file(img, temp_dir, f"page_{i}_{uploaded_file.name}.png")
+                        file_paths_to_process.append(img_path)
                 else:
-                    st.error("Cannot process without agentic_doc package. Please install it.")
+                    # For image files, use directly
+                    file_paths_to_process.append(original_path)
+                
+                # Process all paths for this file
+                for path_idx, path in enumerate(file_paths_to_process):
+                    st.write(f"Processing {path.name} ({path_idx + 1}/{len(file_paths_to_process)})")
+                    
+                    if agentic_imported:
+                        try:
+                            # Process timing for this specific file
+                            file_start_time = time.time()
+                            
+                            # Parse documents
+                            results = parse_documents([str(path)])
+                            doc = results[0]
+                            text = "\n".join(c.text for c in doc.chunks)
+                            
+                            data = extract_fields_with_openai(client, text, selected, doc.chunks)
+                            
+                            # Calculate and display timing information
+                            file_end_time = time.time()
+                            file_processing_time = file_end_time - file_start_time
+                            file_size_kb = path.stat().st_size / 1024
+                            time_per_kb = file_processing_time / file_size_kb if file_size_kb > 0 else 0
+                            
+                            st.success(f"✅ File {path.name} processed in {format_time(file_processing_time)}")
+                            st.info(f"File size: {file_size_kb:.2f} KB | Time per KB: {format_time(time_per_kb)} per KB")
+                            
+                            # Display results based on selected visualization option
+                            if "Option 1" in vis_option:  # Original method - one image per field
+                                st.subheader(f"Extracted Fields with Individual Images - {path.name}")
+                                for idx, (nm, fd) in enumerate(data.items()):
+                                    if fd.get('value'):
+                                        st.markdown(f"### {nm}: {fd['value']}")
+                                        if fd.get('matching_chunks'):
+                                            # Get color for this field
+                                            color_idx = idx % len(COLORS)
+                                            display_chunk_evidence(fd['matching_chunks'][0], nm, str(path), COLORS[color_idx])
+                            
+                            else:  # Option 2 - Combined visualization with improved tabular display
+                                st.subheader(f"Unified View - {path.name}")
+                                display_unified_evidence(data, str(path))
+                                
+                        except Exception as e:
+                            st.error(f"Error processing {path.name}: {e}")
+                    else:
+                        st.error("Cannot process without agentic_doc package. Please install it.")
+            
+            # Update progress to complete
+            progress_bar.progress(1.0)
+            progress_text.text("Processing complete!")
+            
+            # Display overall timing information
+            end_time = time.time()
+            total_processing_time = end_time - start_time
+            time_per_kb_overall = total_processing_time / total_kb if total_kb > 0 else 0
+            
+            st.success(f"🎉 All files processed successfully!")
+            
+            # Create a metrics display for timing
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Processing Time", format_time(total_processing_time))
+            with col2:
+                st.metric("Total File Size", f"{total_kb:.2f} KB")
+            with col3:
+                st.metric("Avg Time per KB", format_time(time_per_kb_overall))
 
 if __name__ == "__main__":
     main()
