@@ -13,15 +13,11 @@ from PIL import Image, ImageDraw
 
 # Handle different versions of OpenAI package
 try:
-    from openai.types.error import APIError
+    from openai.error import InvalidRequestError, OpenAIError
 except ImportError:
-    try:
-        from openai.error import APIError, InvalidRequestError, OpenAIError
-    except ImportError:
-        # Define fallback error classes if needed
-        class APIError(Exception): pass
-        class InvalidRequestError(Exception): pass
-        class OpenAIError(Exception): pass
+    # Define fallback error classes if needed
+    class InvalidRequestError(Exception): pass
+    class OpenAIError(Exception): pass
 
 # Conditionally import agentic_doc if available
 try:
@@ -59,14 +55,19 @@ def initialize_clients():
         return None
     
     if agentic_imported:
-        settings = Settings(
-            vision_agent_api_key=VISION_AGENT_API_KEY,
-            batch_size=4,
-            max_workers=5,
-            max_retries=100,
-            max_retry_wait_time=60,
-            retry_logging_style="log_msg"
-        )
+        try:
+            # Initialize with the correct parameters according to the agentic-doc documentation
+            settings = Settings(
+                vision_agent_api_key=VISION_AGENT_API_KEY,
+                batch_size=4,
+                max_workers=5,
+                max_retries=100,
+                max_retry_wait_time=60,
+                retry_logging_style="log_msg"
+            )
+        except Exception as e:
+            st.error(f"Error initializing Settings: {e}")
+            return None
     
     return client
 
@@ -265,9 +266,10 @@ def main():
                 
                 if agentic_imported:
                     # Debug: before parsing
-                    st.write("✅ Received file, calling parse_documents() with timeout=30...")
+                    st.write("✅ Received file, calling parse_documents()...")
                     try:
-                        results = parse_documents([str(path)], timeout=30)
+                        # Call parse_documents without the timeout parameter
+                        results = parse_documents([str(path)])
                         st.write("✅ parse_documents() returned")
                     except Exception as e:
                         st.error(f"❌ parse_documents error: {e}")
