@@ -396,8 +396,20 @@ def display_unified_evidence(data: Dict[str, Any], path: str):
         st.image(final_img, caption=f"Page {page_idx + 1} with all extracted fields")
 
 
+def format_cell_content(content):
+    """Format cell content to wrap long text properly."""
+    if not content:
+        return "Not found"
+    
+    # Replace newlines with HTML line breaks for proper wrapping
+    content = content.replace('\n', '<br>')
+    
+    # Wrap long text if needed
+    return f'<div style="word-wrap: break-word; max-width: 300px;">{content}</div>'
+
+
 def display_comparison_evidence(source_data: Dict[str, Any], reference_data: Dict[str, Any], 
-                               source_path: str):
+                               source_path: str, reference_fields: List[Dict[str, str]]):
     """Display comparison between source and reference with match/mismatch highlighting."""
     # Group all matching chunks by page_idx
     page_chunks = defaultdict(list)
@@ -405,8 +417,11 @@ def display_comparison_evidence(source_data: Dict[str, Any], reference_data: Dic
     # Build comparison data
     comparison_results = {}
     
-    for field_name, field_data in source_data.items():
-        source_value = field_data.get('value')
+    # Get list of field names we want to compare (only those from reference frame)
+    reference_field_names = [field['name'] for field in reference_fields]
+    
+    for field_name in reference_field_names:
+        source_value = source_data.get(field_name, {}).get('value')
         reference_value = reference_data.get(field_name, {}).get('value')
         
         match_status = False
@@ -420,16 +435,16 @@ def display_comparison_evidence(source_data: Dict[str, Any], reference_data: Dic
             'match': match_status
         }
         
-        # Get coordinates for visualization
-        if field_data.get('value') and field_data.get('matching_chunks'):
-            chunk = field_data['matching_chunks'][0]  # Take first matching chunk
+        # Get coordinates for visualization (if available in source data)
+        if field_name in source_data and source_data[field_name].get('value') and source_data[field_name].get('matching_chunks'):
+            chunk = source_data[field_name]['matching_chunks'][0]  # Take first matching chunk
             coords_list = get_chunk_coordinates(chunk, source_path)
             
             for item in coords_list:
                 color = MATCH_COLOR if match_status else MISMATCH_COLOR
                 page_chunks[item['page_idx']].append({
                     'field_name': field_name,
-                    'value': field_data['value'],
+                    'value': source_data[field_name]['value'],
                     'coords': item['coords'],
                     'match': match_status
                 })
@@ -437,16 +452,60 @@ def display_comparison_evidence(source_data: Dict[str, Any], reference_data: Dic
     # Create a tabular display for comparison results
     st.markdown("### Field Comparison Results")
     
-    # Create DataFrame-compatible data for comparison table
-    table_md = "| Field | Source Value | Reference Value | Match |\n| --- | --- | --- | :---: |\n"
+    # Create a styled table with proper cell wrapping
+    st.markdown("""
+    <style>
+    .comparison-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .comparison-table th, .comparison-table td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+        vertical-align: top;
+    }
+    .comparison-table th {
+        background-color: #f2f2f2;
+        font-weight: bold;
+    }
+    .comparison-table tr:nth-child(even) {
+        background-color: #f9f9f9;
+    }
+    .match-indicator {
+        text-align: center;
+        font-size: 18px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Build the HTML table
+    table_html = """
+    <table class="comparison-table">
+        <tr>
+            <th>Field</th>
+            <th>Source Value</th>
+            <th>Reference Value</th>
+            <th>Match</th>
+        </tr>
+    """
     
     for field_name, result in comparison_results.items():
-        source_val = result['source_value'] or "Not found"
-        ref_val = result['reference_value'] or "Not found"
+        source_val = format_cell_content(result['source_value'])
+        ref_val = format_cell_content(result['reference_value'])
         match_icon = "✅" if result['match'] else "❌"
-        table_md += f"| {field_name} | {source_val} | {ref_val} | {match_icon} |\n"
+        
+        table_html += f"""
+        <tr>
+            <td>{field_name}</td>
+            <td>{source_val}</td>
+            <td>{ref_val}</td>
+            <td class="match-indicator">{match_icon}</td>
+        </tr>
+        """
     
-    st.markdown(table_md)
+    table_html += "</table>"
+    st.markdown(table_html, unsafe_allow_html=True)
     
     # For each page with data, create a combined visualization
     st.markdown("### Document with Match/Mismatch Highlighting")
@@ -538,8 +597,64 @@ def process_file(file_path: Path, selected_fields, client, temp_dir: Path):
     return all_results
 
 
+def create_frame_with_border(title, content_function):
+    """Create a visually distinct frame with border and shadow."""
+    # Custom CSS for the frame
+    st.markdown("""
+    <style>
+    .frame-container {
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        background-color: white;
+    }
+    .frame-title {
+        font-size: 1.5em;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #eee;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Frame container with title
+    st.markdown(f'<div class="frame-container"><div class="frame-title">{title}</div>', unsafe_allow_html=True)
+    
+    # Execute the content function
+    result = content_function()
+    
+    # Close the container
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    return result
+
+
+def estimate_processing_time(total_kb):
+    """Estimate processing time based on file size."""
+    # Use 2.6 seconds per KB as specified
+    seconds_estimate = total_kb * 2.6
+    minutes_estimate = seconds_estimate / 60
+    
+    # Round to the nearest minute, but minimum 1 minute
+    rounded_minutes = max(1, round(minutes_estimate))
+    
+    return rounded_minutes
+
+
 def main():
     st.set_page_config(layout="wide", page_title="Invoice Field Extractor & Comparator")
+    
+    # Add custom CSS for the overall page
+    st.markdown("""
+    <style>
+    .main {
+        background-color: #f5f7fa;
+        padding: 20px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     
     # Check if client can be initialized
     client = initialize_clients()
@@ -559,38 +674,77 @@ def main():
         
         # Left frame (Files to check)
         with left_col:
-            st.markdown("## Files to Check")
-            source_selected = manage_fields(left_col, "source")
-            source_files = st.file_uploader("Upload documents to check", 
-                                           type=['pdf', 'png', 'jpg', 'jpeg'], 
-                                           accept_multiple_files=True,
-                                           key="source_files")
+            def left_frame_content():
+                st.markdown("### Documents to Process")
+                source_files = st.file_uploader("Upload documents to check", 
+                                              type=['pdf', 'png', 'jpg', 'jpeg'], 
+                                              accept_multiple_files=True,
+                                              key="source_files")
+                
+                # Only show fields management if we're in Option 1 mode
+                if 'process_option' not in st.session_state or "Option 1" in st.session_state.get('process_option', ''):
+                    source_selected = manage_fields(st.container(), "source")
+                else:
+                    # Just initialize empty fields if in Option 2 mode
+                    if 'source_extraction_fields' not in st.session_state:
+                        st.session_state['source_extraction_fields'] = get_default_fields()
+                    source_selected = []
+                
+                return source_files, source_selected
+            
+            source_files, source_selected = create_frame_with_border("Files to Check", left_frame_content)
         
         # Right frame (Reference files)
         with right_col:
-            st.markdown("## Reference Files")
-            reference_selected = manage_fields(right_col, "reference")
-            reference_files = st.file_uploader("Upload reference documents", 
-                                              type=['pdf', 'png', 'jpg', 'jpeg'], 
-                                              accept_multiple_files=True,
-                                              key="reference_files")
+            def right_frame_content():
+                st.markdown("### Reference Documents")
+                reference_files = st.file_uploader("Upload reference documents", 
+                                                type=['pdf', 'png', 'jpg', 'jpeg'], 
+                                                accept_multiple_files=True,
+                                                key="reference_files")
+                reference_selected = manage_fields(st.container(), "reference")
+                return reference_files, reference_selected
+            
+            reference_files, reference_selected = create_frame_with_border("Reference Files", right_frame_content)
     
     # Bottom frame (Processing Options)
     with bottom_container:
-        st.markdown("## Processing Options")
+        def bottom_frame_content():
+            st.markdown("### Select Processing Method")
+            
+            process_option = st.radio(
+                "Choose processing option:",
+                ["Option 1: Extract desired field information only",
+                 "Option 2: Extract and Compare fields against reference document"]
+            )
+            
+            # Store the process option in session state to control field display
+            st.session_state['process_option'] = process_option
+            
+            if "Option 1" in process_option:
+                vis_option = st.radio(
+                    "Choose visualization style:",
+                    ["Show each field with corresponding reference image",
+                     "Show multiple color-coded bounding boxes per document"],
+                    key="vis_option"
+                )
+            
+            # Add estimated processing time calculation
+            if source_files or reference_files:
+                total_kb = 0
+                
+                if "Option 1" in process_option and source_files:
+                    total_kb = sum(file.size / 1024 for file in source_files)
+                elif "Option 2" in process_option and source_files and reference_files:
+                    total_kb = sum(file.size / 1024 for file in source_files) + sum(file.size / 1024 for file in reference_files)
+                
+                if total_kb > 0:
+                    minutes_estimate = estimate_processing_time(total_kb)
+                    st.info(f"📊 Estimated processing time: approximately {minutes_estimate} minute{'s' if minutes_estimate != 1 else ''}")
+            
+            return process_option
         
-        process_option = st.radio(
-            "Choose processing option:",
-            ["Option 1: Extract desired field information only",
-             "Option 2: Extract and Compare fields against reference document"]
-        )
-        
-        vis_option = st.radio(
-            "Choose visualization style (for Option 1):",
-            ["Show each field with corresponding reference image",
-             "Show multiple color-coded bounding boxes per document"],
-            key="vis_option"
-        )
+        process_option = create_frame_with_border("Processing Options", bottom_frame_content)
         
         # Add spacer
         st.markdown("---")
@@ -693,14 +847,19 @@ def main():
                     # Process timing
                     comparison_start_time = time.time()
                     
-                    # Process both files
+                    # For Option 2, use ONLY the reference fields for both source and reference document
+                    # First, create a collection of reference fields that are selected to extract
+                    reference_fields_to_extract = [fld for i, fld in enumerate(st.session_state['reference_extraction_fields']) 
+                                                if st.session_state.get(f"reference_ext_{i}", True)]
+                    
+                    # Process both files - but use reference fields for both
                     progress_text.text(f"Processing source file: {source_file.name}")
                     progress_bar.progress(0.25)
-                    source_results = process_file(source_path, source_selected, client, temp_dir)
+                    source_results = process_file(source_path, reference_fields_to_extract, client, temp_dir)
                     
                     progress_text.text(f"Processing reference file: {reference_file.name}")
                     progress_bar.progress(0.5)
-                    reference_results = process_file(reference_path, reference_selected, client, temp_dir)
+                    reference_results = process_file(reference_path, reference_fields_to_extract, client, temp_dir)
                     
                     progress_text.text("Comparing results...")
                     progress_bar.progress(0.75)
@@ -710,11 +869,12 @@ def main():
                         source_data = source_results[0]['data']
                         reference_data = reference_results[0]['data']
                         
-                        # Display comparison
+                        # Display comparison - pass the reference fields to compare
                         display_comparison_evidence(
                             source_data, 
                             reference_data, 
-                            str(source_results[0]['path'])
+                            str(source_results[0]['path']),
+                            reference_fields_to_extract
                         )
                     else:
                         st.error("Error processing files for comparison")
