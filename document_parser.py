@@ -4,7 +4,6 @@ import json
 import tempfile
 import re
 import random
-import pandas as pd
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -295,7 +294,7 @@ def display_chunk_evidence(chunk, name: str, path: str, color: Tuple[int, int, i
             if coords:
                 img = get_document_image(path, getattr(g, 'page_idx', 0))
                 if img: 
-                    st.image(draw_bounding_box(img, coords, color=color, label=name), use_container_width=True)
+                    st.image(draw_bounding_box(img, coords, color=color, label=name))
 
 
 def display_unified_evidence(data: Dict[str, Any], path: str):
@@ -315,39 +314,37 @@ def display_unified_evidence(data: Dict[str, Any], path: str):
                     'coords': item['coords']
                 })
     
-    # Create a color map for field names
+    # Create a color mapping for fields
     color_map = {}
     for idx, field_name in enumerate(data.keys()):
         if data[field_name].get('value'):
             color_idx = idx % len(COLORS)
             color_map[field_name] = COLORS[color_idx]
     
-    # Create a tabulated display of fields
-    st.markdown("### Extracted Fields")
+    # Create a tabular display for the color legend
+    st.markdown("### Extracted Fields Color Legend")
     
-    # Create a DataFrame for the table
-    field_data = []
-    for field_name, field_info in data.items():
-        if field_info.get('value'):
+    # Create DataFrame-compatible data for st.table
+    table_data = []
+    for field_name, field_data in data.items():
+        if field_data.get('value'):
             color = color_map.get(field_name, (255, 0, 0))
-            hex_color = "#{:02x}{:02x}{:02x}".format(*color)
-            
-            field_data.append({
-                "Field Name": field_name,
-                "Value": field_info.get('value', ""),
-                "Color": hex_color
+            color_hex = f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}"
+            table_data.append({
+                "Field": field_name,
+                "Extracted Value": field_data['value'],
+                "Color": f"<div style='background-color:{color_hex}; width:20px; height:20px; border-radius:4px;'></div>"
             })
     
-    if field_data:
-        df = pd.DataFrame(field_data)
+    # Display the table
+    if table_data:
+        # Use a markdown table for better styling control
+        table_md = "| Field | Extracted Value | Color |\n| --- | --- | :---: |\n"
+        for row in table_data:
+            color = row["Color"]
+            table_md += f"| {row['Field']} | {row['Extracted Value']} | {color} |\n"
         
-        # Apply custom formatting with color indicators
-        st.write(
-            df.style.apply(
-                lambda x: [f"background-color: {color}20" for color in x['Color']], 
-                axis=1
-            ).hide_columns(['Color'])
-        )
+        st.markdown(table_md, unsafe_allow_html=True)
     
     # For each page with data, create a combined visualization
     st.markdown("### Document with All Fields")
@@ -377,3 +374,66 @@ def display_unified_evidence(data: Dict[str, Any], path: str):
             )
         
         # Display the final image with all bounding boxes
+        st.image(final_img, caption=f"Page {page_idx + 1} with all extracted fields")
+
+
+def main():
+    st.set_page_config(layout="wide")
+    st.title("📄 Invoice Field Extractor")
+    st.write("Upload an invoice to extract fields.")
+
+    client = initialize_clients()
+    if client is None:
+        st.stop()
+
+    selected = manage_fields()
+    
+    # Add visualization options
+    st.subheader("Visualization Options")
+    vis_option = st.radio(
+        "Choose how to display extracted fields:",
+        ["Option 1: Output each field with corresponding reference image",
+         "Option 2: Multiple color-coded bounding boxes per reference document"]
+    )
+    
+    up = st.file_uploader("Upload document", type=['pdf', 'png', 'jpg', 'jpeg'])
+
+    if up and selected and st.button("Extract Fields"):
+        with st.spinner("Processing..."):
+            # Create a temporary directory for processing
+            with tempfile.TemporaryDirectory() as td:
+                path = Path(td) / f"in{up.name}"
+                path.write_bytes(up.getvalue())
+                
+                if agentic_imported:
+                    try:
+                        # Parse documents - no timeout parameter needed
+                        results = parse_documents([str(path)])
+                    except Exception as e:
+                        st.error(f"Error during document parsing: {e}")
+                        st.stop()
+
+                    doc = results[0]
+                    text = "\n".join(c.text for c in doc.chunks)
+                    
+                    data = extract_fields_with_openai(client, text, selected, doc.chunks)
+                    
+                    # Display results based on selected visualization option
+                    if "Option 1" in vis_option:  # Original method - one image per field
+                        st.subheader("Extracted Fields with Individual Images")
+                        for idx, (nm, fd) in enumerate(data.items()):
+                            if fd.get('value'):
+                                st.markdown(f"### {nm}: {fd['value']}")
+                                if fd.get('matching_chunks'):
+                                    # Get color for this field
+                                    color_idx = idx % len(COLORS)
+                                    display_chunk_evidence(fd['matching_chunks'][0], nm, str(path), COLORS[color_idx])
+                    
+                    else:  # Option 2 - Combined visualization with improved tabular display
+                        display_unified_evidence(data, str(path))
+                        
+                else:
+                    st.error("Cannot process without agentic_doc package. Please install it.")
+
+if __name__ == "__main__":
+    main()
