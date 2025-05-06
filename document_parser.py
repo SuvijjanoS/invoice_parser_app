@@ -3,13 +3,15 @@ from pathlib import Path
 import json
 import tempfile
 import re
+import random
 
 import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
 import fitz  # PyMuPDF for PDF handling
-from typing import List, Dict, Any, Tuple
-from PIL import Image, ImageDraw
+from typing import List, Dict, Any, Tuple, Optional
+from PIL import Image, ImageDraw, ImageFont
+from collections import defaultdict
 
 # Handle different versions of OpenAI package
 try:
@@ -34,6 +36,25 @@ load_dotenv()
 # Fetch API keys: prefer Streamlit secrets, fallback to environment
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
 VISION_AGENT_API_KEY = st.secrets.get("VISION_AGENT_API_KEY", os.getenv("VISION_AGENT_API_KEY"))
+
+# Define a set of distinct colors for bounding boxes
+COLORS = [
+    (255, 0, 0),      # Red
+    (0, 255, 0),      # Green
+    (0, 0, 255),      # Blue
+    (255, 255, 0),    # Yellow
+    (255, 0, 255),    # Magenta
+    (0, 255, 255),    # Cyan
+    (255, 128, 0),    # Orange
+    (128, 0, 255),    # Purple
+    (0, 128, 0),      # Dark Green
+    (0, 0, 128),      # Navy Blue
+    (128, 128, 0),    # Olive
+    (128, 0, 0),      # Maroon
+    (0, 128, 128),    # Teal
+    (255, 128, 128),  # Light Red
+    (128, 255, 128),  # Light Green
+]
 
 def initialize_clients():
     if not OPENAI_API_KEY:
@@ -215,16 +236,55 @@ def parse_box_string(s: str):
         return None
 
 
-def draw_bounding_box(img: Image.Image, box: List[float]) -> Image.Image:
+def draw_bounding_box(img: Image.Image, box: List[float], color: Tuple[int, int, int] = (255, 0, 0), 
+                     label: Optional[str] = None) -> Image.Image:
+    """Draw a bounding box on an image with optional label."""
     out = img.copy()
     d = ImageDraw.Draw(out)
     w, h = out.size
     x0, y0, x1, y1 = [int(c*dim) for c, dim in zip(box, [w, h, w, h])]
-    d.rectangle([x0, y0, x1, y1], outline=(255, 0, 0), width=2)
+    d.rectangle([x0, y0, x1, y1], outline=color, width=2)
+    
+    # Add label if provided
+    if label:
+        try:
+            # Try to use a default font, but gracefully fail if not available
+            font = ImageFont.truetype("arial.ttf", 14)
+        except IOError:
+            font = ImageFont.load_default()
+        
+        # Draw text background for better visibility
+        text_width, text_height = d.textsize(label, font=font) if hasattr(d, 'textsize') else (len(label) * 7, 16)
+        d.rectangle([x0, y0-text_height-4, x0+text_width+4, y0], fill=color)
+        d.text((x0+2, y0-text_height-2), label, fill=(255, 255, 255), font=font)
+    
     return out
 
 
-def display_chunk_evidence(chunk, name: str, path: str):
+def get_chunk_coordinates(chunk, path: str) -> List[Dict]:
+    """Get coordinates for a chunk's bounding boxes."""
+    coords_list = []
+    
+    if hasattr(chunk, 'grounding'):
+        for g in chunk.grounding:
+            box = getattr(g, 'box', None)
+            page_idx = getattr(g, 'page_idx', 0)
+            
+            coords = parse_box_string(box) if isinstance(box, str) else (
+                getattr(box, 'l', None) is not None and [box.l, box.t, box.r, box.b]
+            )
+            
+            if coords:
+                coords_list.append({
+                    'coords': coords,
+                    'page_idx': page_idx
+                })
+    
+    return coords_list
+
+
+def display_chunk_evidence(chunk, name: str, path: str, color: Tuple[int, int, int] = (255, 0, 0)):
+    """Display a single chunk with bounding box."""
     if hasattr(chunk, 'grounding'):
         for g in chunk.grounding:
             box = getattr(g, 'box', None)
@@ -234,7 +294,67 @@ def display_chunk_evidence(chunk, name: str, path: str):
             if coords:
                 img = get_document_image(path, getattr(g, 'page_idx', 0))
                 if img: 
-                    st.image(draw_bounding_box(img, coords))
+                    st.image(draw_bounding_box(img, coords, color=color, label=name))
+
+
+def display_unified_evidence(data: Dict[str, Any], path: str):
+    """Display all fields on a single image with color-coded bounding boxes."""
+    # Group all matching chunks by page_idx
+    page_chunks = defaultdict(list)
+    
+    for field_name, field_data in data.items():
+        if field_data.get('value') and field_data.get('matching_chunks'):
+            chunk = field_data['matching_chunks'][0]  # Take first matching chunk
+            coords_list = get_chunk_coordinates(chunk, path)
+            
+            for item in coords_list:
+                page_chunks[item['page_idx']].append({
+                    'field_name': field_name,
+                    'value': field_data['value'],
+                    'coords': item['coords']
+                })
+    
+    # Create a legend for the color coding
+    st.markdown("### Color Legend")
+    color_map = {}
+    legend_cols = st.columns(5)
+    for idx, (field_name, _) in enumerate(data.items()):
+        if data[field_name].get('value'):
+            color_idx = idx % len(COLORS)
+            color = COLORS[color_idx]
+            color_map[field_name] = color
+            with legend_cols[idx % 5]:
+                st.markdown(f"<div style='color:rgb{color};'>■</div> {field_name}: {data[field_name]['value']}", unsafe_allow_html=True)
+    
+    # For each page with data, create a combined visualization
+    st.markdown("### Document with All Fields")
+    for page_idx, chunks in page_chunks.items():
+        # Only process if there are chunks on this page
+        if not chunks:
+            continue
+            
+        img = get_document_image(path, page_idx)
+        if not img:
+            continue
+            
+        # Start with the base image
+        final_img = img.copy()
+        
+        # Add all bounding boxes
+        for chunk_data in chunks:
+            field_name = chunk_data['field_name']
+            coords = chunk_data['coords']
+            color = color_map.get(field_name, (255, 0, 0))  # Default to red if no color found
+            
+            final_img = draw_bounding_box(
+                final_img, 
+                coords, 
+                color=color, 
+                label=field_name
+            )
+        
+        # Display the final image with all bounding boxes
+        st.image(final_img, caption=f"Page {page_idx + 1} with all extracted fields")
 
 
 def main():
@@ -248,6 +368,15 @@ def main():
 
     selected = manage_fields()
     translate = st.checkbox("Translate Thai→English", value=False)
+    
+    # Add visualization options
+    st.subheader("Visualization Options")
+    vis_option = st.radio(
+        "Choose how to display extracted fields:",
+        ["Option 1: Output each field with corresponding reference image",
+         "Option 2: Multiple color-coded bounding boxes per reference document"]
+    )
+    
     up = st.file_uploader("Upload document", type=['pdf', 'png', 'jpg', 'jpeg'])
 
     if up and selected and st.button("Extract Fields"):
@@ -272,14 +401,30 @@ def main():
                         st.warning("Translation functionality not implemented yet")
                         
                     data = extract_fields_with_openai(client, text, selected, doc.chunks)
-                    for nm, fd in data.items():
-                        if fd.get('value'):
-                            c1, c2 = st.columns([1, 3])
-                            with c1: 
-                                st.markdown(f"**{nm}:** {fd['value']}")
-                            with c2:
+                    
+                    # Display results based on selected visualization option
+                    if "Option 1" in vis_option:  # Original method - one image per field
+                        st.subheader("Extracted Fields with Individual Images")
+                        for idx, (nm, fd) in enumerate(data.items()):
+                            if fd.get('value'):
+                                st.markdown(f"### {nm}: {fd['value']}")
                                 if fd.get('matching_chunks'):
-                                    display_chunk_evidence(fd['matching_chunks'][0], nm, str(path))
+                                    # Get color for this field
+                                    color_idx = idx % len(COLORS)
+                                    display_chunk_evidence(fd['matching_chunks'][0], nm, str(path), COLORS[color_idx])
+                    
+                    else:  # Option 2 - Combined visualization
+                        st.subheader("Extracted Field Values")
+                        # Display field values in a more compact format first
+                        cols = st.columns(3)
+                        for idx, (nm, fd) in enumerate(data.items()):
+                            if fd.get('value'):
+                                with cols[idx % 3]:
+                                    st.markdown(f"**{nm}:** {fd['value']}")
+                        
+                        # Then show the unified visualization
+                        display_unified_evidence(data, str(path))
+                        
                 else:
                     st.error("Cannot process without agentic_doc package. Please install it.")
 
