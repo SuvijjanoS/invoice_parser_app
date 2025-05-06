@@ -111,7 +111,7 @@ def get_default_fields() -> List[Dict[str, str]]:
     ]
 
 def manage_fields():
-    st.subheader("Manage Fields")
+    st.header("Manage Fields")
     if 'extraction_fields' not in st.session_state:
         st.session_state.extraction_fields = get_default_fields()
 
@@ -323,7 +323,7 @@ def display_unified_evidence(data: Dict[str, Any], path: str):
             color_map[field_name] = COLORS[color_idx]
     
     # Create a tabular display for the color legend
-    st.markdown("### Extracted Fields Color Legend")
+    st.header("Extracted Fields Color Legend")
     
     # Create DataFrame-compatible data for st.table
     table_data = []
@@ -348,7 +348,7 @@ def display_unified_evidence(data: Dict[str, Any], path: str):
         st.markdown(table_md, unsafe_allow_html=True)
     
     # For each page with data, create a combined visualization
-    st.markdown("### Document with All Fields")
+    st.header("Document with All Fields")
     for page_idx, chunks in page_chunks.items():
         # Only process if there are chunks on this page
         if not chunks:
@@ -551,7 +551,7 @@ def process_multiple_files(client, file_paths: List[str], selected_fields: List[
 
 def display_option1_results(results: List[Dict], color_map: Dict[str, Tuple[int, int, int]]):
     """Display Option 1 results with tabular format and clickable thumbnails."""
-    st.subheader("Extracted Fields with Individual Images")
+    st.header("Extracted Fields with Individual Images")
     
     for result in results:
         st.markdown(f"## Document: {os.path.basename(result['path'])}")
@@ -609,7 +609,7 @@ def display_option1_results(results: List[Dict], color_map: Dict[str, Tuple[int,
             st.markdown(get_download_link(df_excel, f"extracted_{os.path.basename(result['path'])}.xlsx"), unsafe_allow_html=True)
             
             # Display table with HTML content
-            st.write("### Extracted Fields")
+            st.header("Extracted Fields")
             
             # We need to use st.markdown for the HTML in the table
             table_html = "<table style='width:100%; border-collapse: collapse;'>"
@@ -672,7 +672,7 @@ def main():
     selected = manage_fields()
     
     # Add visualization options
-    st.subheader("Visualization Options")
+    st.header("Visualization Options")
     vis_option = st.radio(
         "Choose how to display extracted fields:",
         ["Option 1: Individual field images with tabular display",
@@ -691,7 +691,7 @@ def main():
         st.session_state.processed_results = []
     
     if upload_option == "Upload files":
-        st.subheader("Upload Files Section")
+        st.header("Upload Files Section")
         # Multi-file uploader
         uploaded_files = st.file_uploader(
             "Upload documents (PDF or images)", 
@@ -719,14 +719,15 @@ def main():
                         st.session_state.processed_results = results
     
     else:  # Select local directory
-        st.subheader("Local Directory Selection")
+        st.header("Local Directory Selection")
         
         # Create columns for folder browser components
         col1, col2 = st.columns([3, 1])
         
         # Initialize session state for directory browsing
         if 'current_dir' not in st.session_state:
-            st.session_state.current_dir = os.path.expanduser('~')  # Start from home directory
+            # Start from user's home directory by default
+            st.session_state.current_dir = os.path.expanduser('~')  # This points to the user's home folder on their PC
         
         # Show current directory with text input for manual editing
         with col1:
@@ -748,7 +749,7 @@ def main():
             directories = [d for d in items if os.path.isdir(os.path.join(st.session_state.current_dir, d))]
             
             # Show directories as buttons
-            st.write("### Directories")
+            st.header("Directories")
             dir_cols = st.columns(3)
             for i, directory in enumerate(directories):
                 with dir_cols[i % 3]:
