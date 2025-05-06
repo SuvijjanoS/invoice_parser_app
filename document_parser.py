@@ -101,7 +101,9 @@ def get_default_fields() -> List[Dict[str, str]]:
         {"name": "Receiving Company Name", "description": "The name of the company receiving the invoice"},
         {"name": "Receiving Company Address", "description": "The complete address of the receiving company"},
         {"name": "Receiving Company Tax ID", "description": "The tax identification number of the receiving company"},
-        {"name": "Issuing Company Name", "description": "The name of the company/vendor/supplier issuing the invoice"}
+        {"name": "Issuing Company Name", "description": "The name of the company/vendor/supplier issuing the invoice"},
+        {"name": "Amount", "description": "The Grand Total amount of the invoice."},
+        {"name": "VAT", "description": "The value-added-tax on the invoice."}
     ]
 
 
