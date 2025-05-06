@@ -110,7 +110,6 @@ def get_default_fields() -> List[Dict[str, str]]:
         {"name": "VAT", "description": "The value-added-tax on the invoice."}
     ]
 
-
 def manage_fields():
     st.subheader("Manage Fields")
     if 'extraction_fields' not in st.session_state:
@@ -681,6 +680,7 @@ def main():
     )
     
     # File upload options
+    st.header("Document Upload")
     upload_option = st.radio(
         "Choose upload method:",
         ["Upload files", "Select local directory"]
@@ -691,6 +691,7 @@ def main():
         st.session_state.processed_results = []
     
     if upload_option == "Upload files":
+        st.subheader("Upload Files Section")
         # Multi-file uploader
         uploaded_files = st.file_uploader(
             "Upload documents (PDF or images)", 
@@ -718,35 +719,79 @@ def main():
                         st.session_state.processed_results = results
     
     else:  # Select local directory
-        directory_path = st.text_input("Enter path to local directory:")
+        st.subheader("Local Directory Selection")
         
-        if directory_path and os.path.isdir(directory_path):
-            if st.button("Check Directory"):
+        # Create columns for folder browser components
+        col1, col2 = st.columns([3, 1])
+        
+        # Initialize session state for directory browsing
+        if 'current_dir' not in st.session_state:
+            st.session_state.current_dir = os.path.expanduser('~')  # Start from home directory
+        
+        # Show current directory with text input for manual editing
+        with col1:
+            typed_path = st.text_input("Current directory:", value=st.session_state.current_dir)
+            if typed_path != st.session_state.current_dir and os.path.isdir(typed_path):
+                st.session_state.current_dir = typed_path
+        
+        # Navigation buttons
+        with col2:
+            if st.button("Parent Directory"):
+                parent = os.path.dirname(st.session_state.current_dir)
+                if os.path.isdir(parent):
+                    st.session_state.current_dir = parent
+                    st.rerun()
+        
+        # List directories and files
+        try:
+            items = sorted(os.listdir(st.session_state.current_dir))
+            directories = [d for d in items if os.path.isdir(os.path.join(st.session_state.current_dir, d))]
+            
+            # Show directories as buttons
+            st.write("### Directories")
+            dir_cols = st.columns(3)
+            for i, directory in enumerate(directories):
+                with dir_cols[i % 3]:
+                    if st.button(f"📁 {directory}"):
+                        new_path = os.path.join(st.session_state.current_dir, directory)
+                        if os.path.isdir(new_path):
+                            st.session_state.current_dir = new_path
+                            st.rerun()
+            
+            # Use this directory button
+            if st.button("Use this directory", type="primary"):
+                directory_path = st.session_state.current_dir
                 valid_files, invalid_files = check_directory_files(directory_path)
                 
                 if invalid_files:
                     st.warning(f"Found {len(invalid_files)} invalid file types. Only PDF and image files will be processed.")
-                    st.write("Invalid files:")
-                    for file in invalid_files[:10]:  # Show first 10 invalid files
-                        st.write(f"- {file}")
-                    if len(invalid_files) > 10:
-                        st.write(f"...and {len(invalid_files) - 10} more")
+                    with st.expander("Show invalid files"):
+                        for file in invalid_files[:10]:  # Show first 10 invalid files
+                            st.write(f"- {os.path.basename(file)}")
+                        if len(invalid_files) > 10:
+                            st.write(f"...and {len(invalid_files) - 10} more")
                 
-                st.success(f"Found {len(valid_files)} valid files ready for processing.")
-                
-                # Store valid files in session state
-                st.session_state.valid_directory_files = valid_files
-                
-                # Show extract button only if valid files found
-                if valid_files and st.button("Extract Fields from Directory"):
-                    st.session_state.processed_results = []  # Reset previous results
+                if valid_files:
+                    st.success(f"Found {len(valid_files)} valid files ready for processing.")
                     
-                    with st.spinner("Processing files..."):
-                        results = process_multiple_files(client, valid_files, selected)
-                        if results:
-                            st.session_state.processed_results = results
-        elif directory_path:
-            st.error("Invalid directory path. Please enter a valid path.")
+                    # Store valid files in session state
+                    st.session_state.valid_directory_files = valid_files
+                    
+                    # Show extract button only if valid files found
+                    if valid_files and st.button("Extract Fields from Directory"):
+                        st.session_state.processed_results = []  # Reset previous results
+                        
+                        with st.spinner("Processing files..."):
+                            results = process_multiple_files(client, valid_files, selected)
+                            if results:
+                                st.session_state.processed_results = results
+                else:
+                    st.error("No valid files (PDF or images) found in this directory.")
+                
+        except PermissionError:
+            st.error("Permission denied. Cannot access this directory.")
+        except Exception as e:
+            st.error(f"Error accessing directory: {e}")
     
     # Display results if available
     if st.session_state.processed_results:
