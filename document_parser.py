@@ -96,16 +96,12 @@ def initialize_clients():
 
 def get_default_fields() -> List[Dict[str, str]]:
     return [
-        {"name": "Document No.", "description": "A unique document number, typically starting with numbers (e.g., 27xxxxxx)"},
-        {"name": "D1", "description": "The D1 field value from the invoice"},
-        {"name": "Comcode", "description": "The company code or identification number"},
         {"name": "Document Type", "description": "The type of document (e.g., Invoice, Receipt, etc.)"},
-        {"name": "Year", "description": "The year the document was issued"},
+        {"name": "Document Date", "description": "The date [dd-month-year the document was issued"},
         {"name": "Receiving Company Name", "description": "The name of the company receiving the invoice"},
         {"name": "Receiving Company Address", "description": "The complete address of the receiving company"},
         {"name": "Receiving Company Tax ID", "description": "The tax identification number of the receiving company"},
-        {"name": "Date", "description": "The date the document was issued"},
-        {"name": "Issuing Company Name", "description": "The name of the company issuing the invoice"}
+        {"name": "Issuing Company Name", "description": "The name of the company/vendor/supplier issuing the invoice"}
     ]
 
 
