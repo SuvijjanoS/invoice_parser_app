@@ -99,10 +99,24 @@ def initialize_clients():
     return client
 
 # Helper functions
-def get_default_fields() -> List[Dict[str, str]]:
+def get_default_source_fields() -> List[Dict[str, str]]:
+    """Default fields for documents to be processed."""
     return [
         {"name": "Document Type", "description": "The type of document (e.g., Invoice, Receipt, etc.)"},
-        {"name": "Document Date", "description": "The date [dd-month-year the document was issued"},
+        {"name": "Document Date", "description": "The date [dd-month-year] the document was issued"},
+        {"name": "Receiving Company Name", "description": "The name of the company receiving the invoice"},
+        {"name": "Receiving Company Address", "description": "The complete address of the receiving company"},
+        {"name": "Receiving Company Tax ID", "description": "The tax identification number of the receiving company"},
+        {"name": "Issuing Company Name", "description": "The name of the company/vendor/supplier issuing the invoice"},
+        {"name": "Amount", "description": "The Grand Total amount of the invoice."},
+        {"name": "VAT", "description": "The value-added-tax on the invoice."}
+    ]
+
+def get_default_reference_fields() -> List[Dict[str, str]]:
+    """Default fields for reference documents."""
+    return [
+        {"name": "Document Type", "description": "The type of document (e.g., Invoice, Receipt, etc.)"},
+        {"name": "Document Date", "description": "The date [dd-month-year] the document was issued"},
         {"name": "Receiving Company Name", "description": "The name of the company receiving the invoice"},
         {"name": "Receiving Company Address", "description": "The complete address of the receiving company"},
         {"name": "Receiving Company Tax ID", "description": "The tax identification number of the receiving company"},
@@ -114,7 +128,11 @@ def get_default_fields() -> List[Dict[str, str]]:
 def manage_fields(container, prefix):
     container.subheader("Manage Fields")
     if f'{prefix}_extraction_fields' not in st.session_state:
-        st.session_state[f'{prefix}_extraction_fields'] = get_default_fields()
+        # Choose the appropriate default fields based on prefix
+        if prefix == "source":
+            st.session_state[f'{prefix}_extraction_fields'] = get_default_source_fields()
+        else:  # prefix == "reference"
+            st.session_state[f'{prefix}_extraction_fields'] = get_default_reference_fields()
 
     container.markdown("### Add New Field")
     col1, col2, col3 = container.columns([2, 3, 1])
@@ -144,7 +162,10 @@ def manage_fields(container, prefix):
             st.checkbox("Extract", value=True, key=f"{prefix}_ext_{idx}")
 
     if st.button("Reset to Default Fields", key=f"{prefix}_reset"):
-        st.session_state[f'{prefix}_extraction_fields'] = get_default_fields()
+        if prefix == "source":
+            st.session_state[f'{prefix}_extraction_fields'] = get_default_source_fields()
+        else:  # prefix == "reference"
+            st.session_state[f'{prefix}_extraction_fields'] = get_default_reference_fields()
         st.rerun()
 
     return [fld for i, fld in enumerate(st.session_state[f'{prefix}_extraction_fields']) 
@@ -636,7 +657,7 @@ def main():
                         # Process timing for this specific file
                         file_start_time = time.time()
                         
-                        # Process the file
+                        # Process the file - use source_selected fields for Option 1
                         results = process_file(original_path, source_selected, client, temp_dir)
                         
                         # Calculate timing information
@@ -693,7 +714,7 @@ def main():
                     # Process timing
                     comparison_start_time = time.time()
                     
-                    # Process both files
+                    # Process both files - use source_selected for source file and reference_selected for reference file
                     progress_text.text(f"Processing source file: {source_file.name}")
                     progress_bar.progress(0.25)
                     source_results = process_file(source_path, source_selected, client, temp_dir)
