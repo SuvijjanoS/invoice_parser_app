@@ -458,20 +458,20 @@ def create_interactive_view(data: Dict[str, Any], path: str):
                                 label=field_name
                             )
                         
+                        # Store the highlighted image
                         highlighted_images[field_name] = highlighted_img
             
-            # Create image area
-            img_area = st.container()
-            
-            # If a field is highlighted, show that image, otherwise show base
+            # Show images based on highlighting state
             if st.session_state.highlighted_field and st.session_state.highlighted_field in highlighted_images:
-                img_area.image(
+                # Show the highlighted version if a field is selected
+                st.image(
                     highlighted_images[st.session_state.highlighted_field],
                     caption=f"Page {page_idx + 1} - Highlighting {st.session_state.highlighted_field}",
                     use_container_width=True
                 )
             else:
-                img_area.image(
+                # Show the base image if nothing is selected
+                st.image(
                     base_img,
                     caption=f"Page {page_idx + 1}",
                     use_container_width=True
