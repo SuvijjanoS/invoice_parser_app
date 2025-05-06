@@ -366,176 +366,147 @@ def create_interactive_view(data: Dict[str, Any], path: str):
             color_idx = idx % len(COLORS)
             color_map[field_name] = COLORS[color_idx]
     
+    # Initialize session state for highlighted field if not exists
+    if 'highlighted_field' not in st.session_state:
+        st.session_state.highlighted_field = None
+    
     # Create a container for our interactive display
     st.markdown("### Interactive Field Extraction Results")
     
     # Create two columns - one for the table, one for the document
     col1, col2 = st.columns([2, 3])
     
+    # Group data by page first - we'll need this for both columns
+    page_data = defaultdict(list)
+    field_images = {}
+    
+    # Prepare document images and bounding boxes data
+    for field_name, field_info in data.items():
+        if field_info.get('value') and field_info.get('matching_chunks'):
+            chunk = field_info['matching_chunks'][0]
+            coords_list = get_chunk_coordinates(chunk, path)
+            
+            for coord_item in coords_list:
+                page_data[coord_item['page_idx']].append({
+                    'field_name': field_name,
+                    'coords': coord_item['coords'],
+                    'color': color_map.get(field_name, (255, 0, 0))
+                })
+    
+    # Render the table in first column
     with col1:
         st.markdown("#### Extracted Fields")
         
-        # Create a container for the table
-        table_container = st.container()
-        
-        # Track which field is currently highlighted (using session state)
-        if 'highlighted_field' not in st.session_state:
-            st.session_state.highlighted_field = None
-            
-        # Create table of extracted fields
+        # Create table container
         for field_name, field_data in data.items():
             if field_data.get('value'):
                 color = color_map.get(field_name, (255, 0, 0))
                 hex_color = "#{:02x}{:02x}{:02x}".format(*color)
                 
-                # Create an element for each field that can be clicked
-                is_active = st.session_state.highlighted_field == field_name
-                bgcolor = hex_color + "30" if is_active else "#ffffff"
+                # Check if this field is highlighted
+                is_highlighted = st.session_state.highlighted_field == field_name
+                bg_color = hex_color + "30" if is_highlighted else "#ffffff"
                 
-                # Create interactive row with hover effect
-                table_container.markdown(
-                    f"""
-                    <div class="field-row" 
-                         style="padding: 10px; margin-bottom: 4px; border-radius: 4px; 
-                                border: 1px solid #eee; background-color: {bgcolor};"
-                         onmouseover="highlightField('{field_name}')" 
-                         onmouseout="unhighlightAll()">
-                        <div style="font-weight: bold; color: {hex_color};">{field_name}</div>
-                        <div>{field_data['value']}</div>
-                    </div>
-                    """, 
-                    unsafe_allow_html=True
-                )
-                
+                # Create a container for this field that highlights on click
+                field_container = st.container()
+                with field_container:
+                    # Add the field to the table with clickable behavior
+                    if st.button(
+                        f"{field_name}: {field_data['value']}", 
+                        key=f"field_{field_name}",
+                        help=f"Click to highlight {field_name} in the document",
+                        use_container_width=True,
+                        type="secondary" if not is_highlighted else "primary"
+                    ):
+                        # Toggle highlighting
+                        if st.session_state.highlighted_field == field_name:
+                            st.session_state.highlighted_field = None
+                        else:
+                            st.session_state.highlighted_field = field_name
+                        st.rerun()
+    
+    # Render the document view in second column
     with col2:
         st.markdown("#### Document View")
         
-        # Group data by page
-        page_data = defaultdict(list)
-        
-        for field_name, field_info in data.items():
-            if field_info.get('value') and field_info.get('matching_chunks'):
-                chunk = field_info['matching_chunks'][0]
-                coords_list = get_chunk_coordinates(chunk, path)
-                
-                for coord_item in coords_list:
-                    page_data[coord_item['page_idx']].append({
-                        'field_name': field_name,
-                        'coords': coord_item['coords'],
-                        'color': color_map.get(field_name, (255, 0, 0))
-                    })
-        
-        # For each page with data
+        # Process each page with data
         for page_idx, items in page_data.items():
             img = get_document_image(path, page_idx)
             if not img:
                 continue
                 
-            # Create base image and highlighted versions
+            # Create the base image and a highlighted version
             base_img = img.copy()
+            
+            # For each field, create a highlighted version of the image
             highlighted_images = {}
+            for field_name in data.keys():
+                if data[field_name].get('value'):
+                    # Find items for this field on this page
+                    field_items = [item for item in items if item['field_name'] == field_name]
+                    
+                    if field_items:
+                        # Create a copy for this field
+                        highlighted_img = img.copy()
+                        
+                        # Add all bounding boxes for this field
+                        for item in field_items:
+                            highlighted_img = draw_bounding_box(
+                                highlighted_img,
+                                item['coords'],
+                                color=item['color'],
+                                label=field_name
+                            )
+                        
+                        highlighted_images[field_name] = highlighted_img
             
-            # Create a highlighted version for each field
-            for item in items:
-                field_name = item['field_name']
-                if field_name not in highlighted_images:
-                    highlighted_img = img.copy()
-                    highlighted_images[field_name] = highlighted_img
-                
-                # Add bounding box to this field's image
-                highlighted_images[field_name] = draw_bounding_box(
-                    highlighted_images[field_name],
-                    item['coords'],
-                    color=item['color'],
-                    label=field_name
+            # Create image area
+            img_area = st.container()
+            
+            # If a field is highlighted, show that image, otherwise show base
+            if st.session_state.highlighted_field and st.session_state.highlighted_field in highlighted_images:
+                img_area.image(
+                    highlighted_images[st.session_state.highlighted_field],
+                    caption=f"Page {page_idx + 1} - Highlighting {st.session_state.highlighted_field}",
+                    use_container_width=True
                 )
-            
-            # Display the base image in the Streamlit app
-            img_container = st.container()
-            img_container.image(base_img, caption=f"Page {page_idx + 1}", use_column_width=True)
-            
-            # Create clickable hotspots for each field on the image
+            else:
+                img_area.image(
+                    base_img,
+                    caption=f"Page {page_idx + 1}",
+                    use_container_width=True
+                )
+                
+            # Add clickable hotspots for each field on this page
             for item in items:
                 field_name = item['field_name']
                 coords = item['coords']
                 
-                # Calculate relative position for the hotspot
-                x0, y0, x1, y1 = coords
-                width, height = base_img.size
-                left = int(x0 * width)
-                top = int(y0 * height)
-                area_width = int((x1 - x0) * width)
-                area_height = int((y1 - y0) * height)
+                # Create a small container to show which areas are clickable
+                tooltip_container = st.empty()
                 
-                # Add this field to our trackers
-                if field_name not in st.session_state.get('hotspot_areas', {}):
-                    if 'hotspot_areas' not in st.session_state:
-                        st.session_state.hotspot_areas = {}
-                    
-                    st.session_state.hotspot_areas[field_name] = {
-                        'page': page_idx,
-                        'left': left,
-                        'top': top,
-                        'width': area_width,
-                        'height': area_height
-                    }
-            
-            # Handle highlighting based on session state
-            if st.session_state.highlighted_field and st.session_state.highlighted_field in highlighted_images:
-                img_container.image(
-                    highlighted_images[st.session_state.highlighted_field],
-                    caption=f"Highlighted: {st.session_state.highlighted_field}",
-                    use_column_width=True
-                )
-    
-    # Add custom CSS and JavaScript for interactivity
-    st.markdown("""
-    <style>
-    .field-row:hover {
-        background-color: rgba(240, 240, 240, 0.8) !important;
-        cursor: pointer;
-    }
-    </style>
-    
-    <script>
-    // Function to highlight a field
-    function highlightField(fieldName) {
-        // Use Streamlit's setComponentValue when available
-        window.parent.postMessage({
-            type: 'streamlit:setComponentValue',
-            value: {
-                highlighted_field: fieldName,
-                trigger: 'highlight'
-            }
-        }, '*');
-    }
-    
-    // Function to remove all highlights
-    function unhighlightAll() {
-        window.parent.postMessage({
-            type: 'streamlit:setComponentValue',
-            value: {
-                highlighted_field: null,
-                trigger: 'unhighlight'
-            }
-        }, '*');
-    }
-    </script>
-    """, unsafe_allow_html=True)
-    
-    # Check for component value changes from JavaScript
-    query_params = st.experimental_get_query_params()
-    trigger = query_params.get('trigger', [None])[0]
-    
-    if trigger == 'highlight':
-        # Get the field to highlight from query params
-        field_to_highlight = query_params.get('highlighted_field', [None])[0]
-        if field_to_highlight and field_to_highlight in data and field_to_highlight != st.session_state.highlighted_field:
-            st.session_state.highlighted_field = field_to_highlight
-            st.experimental_rerun()
-    elif trigger == 'unhighlight' and st.session_state.highlighted_field is not None:
-        st.session_state.highlighted_field = None
-        st.experimental_rerun()
+                # Add a button that shows which field this region belongs to
+                w, h = base_img.size
+                x_center = int((coords[0] + coords[2]) * w / 2)
+                y_center = int((coords[1] + coords[3]) * h / 2)
+                
+                # Define a narrow column where this hotspot should appear
+                col = st.columns([coords[0], coords[2]-coords[0], 1-coords[2]])[1]
+                
+                with col:
+                    # Create a transparent button that highlights this field when clicked
+                    if st.button(
+                        "",  # Empty label
+                        key=f"hotspot_{field_name}_{page_idx}_{x_center}_{y_center}",
+                        help=f"Highlight {field_name}",
+                        type="secondary"
+                    ):
+                        # Toggle highlighting
+                        if st.session_state.highlighted_field == field_name:
+                            st.session_state.highlighted_field = None
+                        else:
+                            st.session_state.highlighted_field = field_name
+                        st.rerun()
 
 
 def main():
