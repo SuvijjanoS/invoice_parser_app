@@ -7,6 +7,8 @@ import random
 import io
 import base64
 import glob
+import time
+from datetime import timedelta
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -508,6 +510,14 @@ def get_download_link(df: pd.DataFrame, filename: str = "extracted_fields.xlsx")
     
     return button_style + href
 
+def get_file_size(file_path):
+    """Get the file size in bytes."""
+    return os.path.getsize(file_path)
+
+def format_time(seconds):
+    """Format seconds into minutes and seconds string."""
+    return str(timedelta(seconds=int(seconds))).split('.')[0]
+
 def process_file(client, file_path: str, selected_fields: List[Dict[str, str]]) -> Dict[str, Dict[str, Any]]:
     """Process a single file and extract fields."""
     if not agentic_imported:
@@ -525,7 +535,8 @@ def process_file(client, file_path: str, selected_fields: List[Dict[str, str]]) 
         return {
             'data': data,
             'doc': doc,
-            'path': file_path
+            'path': file_path,
+            'size': get_file_size(file_path)  # Add file size
         }
     except Exception as e:
         st.error(f"Error processing file {os.path.basename(file_path)}: {e}")
@@ -539,12 +550,29 @@ def process_multiple_files(client, file_paths: List[str], selected_fields: List[
     progress_bar = st.progress(0)
     status_text = st.empty()
     
+    # Start the stopwatch
+    start_time = time.time()
+    
     for i, file_path in enumerate(file_paths):
         status_text.text(f"Processing file {i+1}/{len(file_paths)}: {os.path.basename(file_path)}")
         result = process_file(client, file_path, selected_fields)
         if result:
             results.append(result)
         progress_bar.progress((i + 1) / len(file_paths))
+    
+    # Stop the stopwatch
+    end_time = time.time()
+    processing_time = end_time - start_time
+    
+    # Calculate total file size
+    total_size_bytes = sum(result.get('size', 0) for result in results)
+    
+    # Store processing stats in session state
+    st.session_state.processing_stats = {
+        'time': processing_time,
+        'total_size': total_size_bytes,
+        'file_count': len(results)
+    }
     
     status_text.text("Processing complete!")
     return results
