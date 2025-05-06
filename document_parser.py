@@ -903,9 +903,9 @@ def main():
             if source_files or reference_files:
                 total_kb = 0
                 
-                if "Option 1" in process_option and source_files:
+                if "Option 1" in st.session_state.get('process_option', '') and source_files:
                     total_kb = sum(file.size / 1024 for file in source_files)
-                elif "Option 2" in process_option and source_files and reference_files:
+                elif "Option 2" in st.session_state.get('process_option', '') and source_files and reference_files:
                     total_kb = sum(file.size / 1024 for file in source_files) + sum(file.size / 1024 for file in reference_files)
                 
                 if total_kb > 0:
