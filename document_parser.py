@@ -1,4 +1,159 @@
-import os
+# Option 1: Extract only
+                if "Option 1" in st.session_state.get('process_option', ''):
+                    st.subheader("Extraction Results")
+                    
+                    # Get the selected fields from the source frame
+                    source_selected = [fld for i, fld in enumerate(st.session_state['source_extraction_fields']) 
+                                    if st.session_state.get(f"source_ext_{i}", True)]
+                    
+                    # Calculate total file size
+                    total_kb = sum(file.size / 1024 for file in source_files)
+                    st.write(f"Total file size: {total_kb:.2f} KB")
+                    
+                    # Process each source file
+                    for file_idx, uploaded_file in enumerate(source_files):
+                        progress_text.text(f"Processing file {file_idx + 1}/{len(source_files)}: {uploaded_file.name}")
+                        progress_bar.progress((file_idx) / len(source_files))
+                        
+                        # Save uploaded file to temp directory
+                        original_path = temp_dir / f"source_{uploaded_file.name}"
+                        original_path.write_bytes(uploaded_file.getvalue())
+                        
+                        # Process timing for this specific file
+                        file_start_time = time.time()
+                        
+                        # Process the file
+                        results = process_file(original_path, source_selected, client, temp_dir)
+                        
+                        # Calculate timing information
+                        file_end_time = time.time()
+                        file_processing_time = file_end_time - file_start_time
+                        file_size_kb = original_path.stat().st_size / 1024
+                        time_per_kb = file_processing_time / file_size_kb if file_size_kb > 0 else 0
+                        
+                        st.success(f"✅ File {uploaded_file.name} processed in {format_time(file_processing_time)}")
+                        st.info(f"File size: {file_size_kb:.2f} KB | Time per KB: {format_time(time_per_kb)} per KB")
+                        
+                        # Display results for each page/image processed
+                        for result in results:
+                            st.subheader(f"Results for {result['path'].name}")
+                            
+                            # Get the visualization option
+                            vis_option = st.session_state.get('vis_option', '')
+                            
+                            # Display based on visualization option
+                            if "each field" in vis_option:
+                                # Option 1 - Individual images per field
+                                for idx, (field_name, field_data) in enumerate(result['data'].items()):
+                                    if field_data.get('value'):
+                                        st.markdown(f"### {field_name}: {field_data['value']}")
+                                        if field_data.get('matching_chunks'):
+                                            # Get color for this field
+                                            color_idx = idx % len(COLORS)
+                                            display_chunk_evidence(
+                                                field_data['matching_chunks'][0], 
+                                                field_name, 
+                                                str(result['path']), 
+                                                COLORS[color_idx]
+                                            )
+                            else:
+                                # Option 2 - Unified visualization
+                                display_unified_evidence(result['data'], str(result['path']))
+                
+                # Option 2: Extract and Compare
+                else:
+                    st.subheader("Comparison Results")
+                    
+                    # We'll use the first file from each group for comparison
+                    if not source_files or not reference_files:
+                        st.error("Please upload both source and reference documents")
+                        st.stop()
+                    
+                    source_file = source_files[0]
+                    reference_file = reference_files[0]
+                    
+                    # Save uploaded files to temp directory
+                    source_path = temp_dir / f"source_{source_file.name}"
+                    source_path.write_bytes(source_file.getvalue())
+                    
+                    reference_path = temp_dir / f"reference_{reference_file.name}"
+                    reference_path.write_bytes(reference_file.getvalue())
+                    
+                    # Process timing
+                    comparison_start_time = time.time()
+                    
+                    # For Option 2, use ONLY the reference fields for both source and reference document
+                    # First, create a collection of reference fields that are selected to extract
+                    reference_fields_to_extract = [fld for i, fld in enumerate(st.session_state['reference_extraction_fields']) 
+                                                if st.session_state.get(f"reference_ext_{i}", True)]
+                    
+                    # Process both files - but use reference fields for both
+                    progress_text.text(f"Processing source file: {source_file.name}")
+                    progress_bar.progress(0.25)
+                    source_results = process_file(source_path, reference_fields_to_extract, client, temp_dir)
+                    
+                    progress_text.text(f"Processing reference file: {reference_file.name}")
+                    progress_bar.progress(0.5)
+                    reference_results = process_file(reference_path, reference_fields_to_extract, client, temp_dir)
+                    
+                    progress_text.text("Comparing results...")
+                    progress_bar.progress(0.75)
+                    
+                    # Get the extracted data
+                    if source_results and reference_results:
+                        source_data = source_results[0]['data']
+                        reference_data = reference_results[0]['data']
+                        
+                        # Display comparison - pass the reference fields to compare
+                        display_comparison_evidence(
+                            source_data, 
+                            reference_data, 
+                            str(source_results[0]['path']),
+                            reference_fields_to_extract
+                        )
+                    else:
+                        st.error("Error processing files for comparison")
+                    
+                    # Calculate timing information
+                    comparison_end_time = time.time()
+                    comparison_time = comparison_end_time - comparison_start_time
+                    
+                    # Display timing metrics
+                    total_size_kb = source_path.stat().st_size / 1024 + reference_path.stat().st_size / 1024
+                    time_per_kb = comparison_time / total_size_kb if total_size_kb > 0 else 0
+                    
+                    st.success(f"✅ Comparison completed in {format_time(comparison_time)}")
+                    st.info(f"Total size: {total_size_kb:.2f} KB | Time per KB: {format_time(time_per_kb)} per KB")
+                
+                # Update progress to complete
+                progress_bar.progress(1.0)
+                progress_text.text("Processing complete!")
+                
+                # Display overall timing information
+                end_time = time.time()
+                total_processing_time = end_time - start_time
+                
+                # For Option 1, calculate total KB
+                if "Option 1" in st.session_state.get('process_option', ''):
+                    total_kb = sum(file.size / 1024 for file in source_files)
+                    time_per_kb_overall = total_processing_time / total_kb if total_kb > 0 else 0
+                else:
+                    # For Option 2, use source + reference file size
+                    total_kb = source_file.size / 1024 + reference_file.size / 1024
+                    time_per_kb_overall = total_processing_time / total_kb if total_kb > 0 else 0
+                
+                # Create a metrics display for timing
+                st.markdown("## Processing Time Metrics")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Processing Time", format_time(total_processing_time))
+                with col2:
+                    st.metric("Total File Size", f"{total_kb:.2f} KB")
+                with col3:
+                    st.metric("Avg Time per KB", format_time(time_per_kb_overall))
+
+if __name__ == "__main__":
+    main()import os
 from pathlib import Path
 import json
 import tempfile
