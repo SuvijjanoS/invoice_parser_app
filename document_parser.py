@@ -596,11 +596,20 @@ def main():
                                           key="source_files")
             
             # Create a hidden uploader for reference files to prevent errors
-            reference_files = st.file_uploader("Hidden Reference Files", 
-                                              type=['pdf', 'png', 'jpg', 'jpeg'], 
-                                              accept_multiple_files=True,
-                                              key="reference_files",
-                                              label_visibility="collapsed")
+            # Make it completely hidden with empty_container trick
+            empty_container = st.empty()
+            with empty_container.container():
+                reference_files = st.file_uploader("Hidden Reference Files", 
+                                                  type=['pdf', 'png', 'jpg', 'jpeg'], 
+                                                  accept_multiple_files=True,
+                                                  key="reference_files",
+                                                  label_visibility="collapsed")
+                # Hide the container
+                st.markdown("""
+                <style>
+                    [data-testid="stFileUploader"] {display: none;}
+                </style>
+                """, unsafe_allow_html=True)
         
         # For Option 2, show both columns
         else:
