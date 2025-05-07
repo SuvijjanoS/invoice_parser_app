@@ -727,6 +727,9 @@ def main():
                         st.error("Please upload both source and reference documents")
                         st.stop()
                     
+                    # Make sure we have the reference fields defined
+                    reference_fields = get_reference_fields()
+                    
                     # Get the reference file (we'll use the first one)
                     reference_file = reference_files[0]
                     reference_path = temp_dir / f"reference_{reference_file.name}"
