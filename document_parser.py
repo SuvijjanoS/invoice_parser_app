@@ -585,54 +585,60 @@ def main():
     
     # Split the top container into left and right
     with top_container:
-        left_col, right_col = st.columns(2)
-        
-        # Left frame (Files to check)
-        with left_col:
+        # For Option 1, only show Files to Check section
+        if "Option 1" in process_option:
+            # Left frame (Files to check)
             st.markdown("## Files to Check")
-            
-            # Only show fields management for Option 1
-            if "Option 1" in process_option:
-                source_selected = manage_fields(left_col, "source")
-            else:
-                # For Option 2, inform user that reference fields will be used
-                st.info("When comparing documents, both 'Files to Check' and 'Reference Files' use the same field set defined under 'Reference Files'.")
-                # Use the reference fields for extraction in Option 2
-                source_selected = get_reference_fields()
-                
+            source_selected = manage_fields(top_container, "source")
             source_files = st.file_uploader("Upload documents to check", 
-                                           type=['pdf', 'png', 'jpg', 'jpeg'], 
-                                           accept_multiple_files=True,
-                                           key="source_files")
+                                          type=['pdf', 'png', 'jpg', 'jpeg'], 
+                                          accept_multiple_files=True,
+                                          key="source_files")
+            
+            # Create a hidden uploader for reference files to prevent errors
+            reference_files = st.file_uploader("Hidden Reference Files", 
+                                              type=['pdf', 'png', 'jpg', 'jpeg'], 
+                                              accept_multiple_files=True,
+                                              key="reference_files",
+                                              label_visibility="collapsed")
         
-        # Right frame (Reference files)
-        with right_col:
-            st.markdown("## Reference Files")
-            if "Option 2" in process_option:
+        # For Option 2, show both columns
+        else:
+            left_col, right_col = st.columns(2)
+            
+            # Left frame (Files to check)
+            with left_col:
+                st.markdown("## Files to Check")
+                st.info("When comparing documents, both 'Files to Check' and 'Reference Files' use the same field set defined under 'Reference Files'.")
+                source_selected = get_reference_fields()  # Use reference fields for Option 2
+                source_files = st.file_uploader("Upload documents to check", 
+                                              type=['pdf', 'png', 'jpg', 'jpeg'], 
+                                              accept_multiple_files=True,
+                                              key="source_files")
+            
+            # Right frame (Reference files)
+            with right_col:
+                st.markdown("## Reference Files")
                 reference_selected = manage_fields(right_col, "reference")
                 reference_files = st.file_uploader("Upload reference documents", 
-                                                  type=['pdf', 'png', 'jpg', 'jpeg'], 
-                                                  accept_multiple_files=True,
-                                                  key="reference_files")
-            else:
-                st.info("Reference files are not used in Option 1. Switch to Option 2 to compare against reference files.")
-                # Create a hidden uploader for Option 1 to prevent errors
-                reference_files = st.file_uploader("Upload reference documents (not used in Option 1)", 
-                                                  type=['pdf', 'png', 'jpg', 'jpeg'], 
-                                                  accept_multiple_files=True,
-                                                  key="reference_files",
-                                                  label_visibility="collapsed")
+                                                 type=['pdf', 'png', 'jpg', 'jpeg'], 
+                                                 accept_multiple_files=True,
+                                                 key="reference_files")
     
     # Bottom frame (Additional Options)
     with bottom_container:
-        st.markdown("## Visualization Options")
-        
-        vis_option = st.radio(
-            "Choose visualization style (for Option 1):",
-            ["Show each field with corresponding reference image",
-             "Show multiple color-coded bounding boxes per document"],
-            key="vis_option"
-        )
+        # Only show visualization options for Option 1
+        if "Option 1" in process_option:
+            st.markdown("## Visualization Options")
+            vis_option = st.radio(
+                "Choose visualization style:",
+                ["Show each field with corresponding reference image",
+                 "Show multiple color-coded bounding boxes per document"],
+                key="vis_option"
+            )
+        else:
+            # For Option 2, the visualization is fixed to the comparison view
+            vis_option = "comparison"  # Default for Option 2
         
         # Add spacer
         st.markdown("---")
