@@ -63,6 +63,7 @@ MATCH_COLOR = (0, 255, 0)      # Green
 MISMATCH_COLOR = (255, 0, 0)   # Red
 
 def initialize_clients():
+    """Initialize OpenAI client and Settings if possible."""
     if not OPENAI_API_KEY:
         st.error(
             "🔑 OpenAI API key missing!\n\n"
@@ -120,19 +121,15 @@ def get_reference_fields() -> List[Dict[str, str]]:
         {"name": "Receiving Company Tax ID", "description": "The tax identification number of the receiving company"},
     ]
 
-def manage_fields(container, prefix, process_option=None):
+def manage_fields(container, prefix):
+    """Manage fields for extraction, with appropriate defaults based on prefix."""
     container.subheader("Manage Fields")
     
-    # Initialize with appropriate fields based on the section and processing option
+    # Initialize with appropriate fields based on the section
     if f'{prefix}_extraction_fields' not in st.session_state:
-        if prefix == "source" and process_option and "Option 2" in process_option:
-            # For Option 2, "Files to Check" should use reference fields
-            st.session_state[f'{prefix}_extraction_fields'] = get_reference_fields()
-        elif prefix == "source":
-            # For Option 1 or default, "Files to Check" uses option1 fields
+        if prefix == "source":
             st.session_state[f'{prefix}_extraction_fields'] = get_option1_fields()
         else:  # prefix == "reference"
-            # Reference section always uses reference fields
             st.session_state[f'{prefix}_extraction_fields'] = get_reference_fields()
 
     container.markdown("### Add New Field")
@@ -163,14 +160,9 @@ def manage_fields(container, prefix, process_option=None):
             st.checkbox("Extract", value=True, key=f"{prefix}_ext_{idx}")
 
     if st.button("Reset to Default Fields", key=f"{prefix}_reset"):
-        if prefix == "source" and process_option and "Option 2" in process_option:
-            # For Option 2, reset "Files to Check" to reference fields
-            st.session_state[f'{prefix}_extraction_fields'] = get_reference_fields()
-        elif prefix == "source":
-            # For Option 1 or default, reset "Files to Check" to option1 fields
+        if prefix == "source":
             st.session_state[f'{prefix}_extraction_fields'] = get_option1_fields()
         else:  # prefix == "reference"
-            # Reset reference section to reference fields
             st.session_state[f'{prefix}_extraction_fields'] = get_reference_fields()
         st.rerun()
 
@@ -241,6 +233,7 @@ Ensure values match the expected format described in the field descriptions.
 
 
 def convert_pdf_page_to_image(pdf_path: str, page_number: int) -> Image.Image:
+    """Convert a single PDF page to a PIL Image."""
     try:
         doc = fitz.open(pdf_path)
         pix = doc[page_number].get_pixmap(matrix=fitz.Matrix(2,2))
@@ -269,10 +262,12 @@ def convert_pdf_to_images(pdf_path: str) -> List[Image.Image]:
 
 
 def get_document_image(path: str, idx: int) -> Image.Image:
+    """Get a document image, handling both PDFs and images."""
     return convert_pdf_page_to_image(path, idx) if path.lower().endswith('.pdf') else Image.open(path)
 
 
 def parse_box_string(s: str):
+    """Parse a box string into coordinates."""
     try:
         parts = s.split()
         coords = {k: float(v) for part in parts for k, v in [part.split('=')]}
@@ -576,12 +571,12 @@ def main():
     # Create the three-frame layout
     st.markdown("# 📄 Document Field Extractor (Invoices)")
     
-    # Get process option first, since field management depends on it
+    # First, define the processing option
+    st.markdown("## Processing Options")
     process_option = st.radio(
         "Choose processing option:",
         ["Option 1: Extract desired field information only",
-         "Option 2: Extract and Compare fields against reference document"],
-        key="process_option"
+         "Option 2: Extract and Compare fields against reference document"]
     )
     
     # Split the screen into top and bottom frames
@@ -595,30 +590,39 @@ def main():
         # Left frame (Files to check)
         with left_col:
             st.markdown("## Files to Check")
-            # Pass the process option to manage_fields to use correct field set
-            source_selected = manage_fields(left_col, "source", process_option)
+            
+            # Get fields appropriate for the selected option
+            source_fields = get_option1_fields()
+            if "Option 2" in process_option:
+                source_fields = get_reference_fields()
+                
+            source_selected = manage_fields(left_col, "source")
             source_files = st.file_uploader("Upload documents to check", 
                                            type=['pdf', 'png', 'jpg', 'jpeg'], 
                                            accept_multiple_files=True,
                                            key="source_files")
         
-        # Right frame (Reference files) - Only show if Option 2 is selected
+        # Right frame (Reference files)
         with right_col:
+            st.markdown("## Reference Files")
             if "Option 2" in process_option:
-                st.markdown("## Reference Files")
                 reference_selected = manage_fields(right_col, "reference")
                 reference_files = st.file_uploader("Upload reference documents", 
                                                   type=['pdf', 'png', 'jpg', 'jpeg'], 
                                                   accept_multiple_files=True,
                                                   key="reference_files")
             else:
-                # For Option 1, hide reference section
-                st.markdown("## Reference Files (Not Used in Option 1)")
                 st.info("Reference files are not used in Option 1. Switch to Option 2 to compare against reference files.")
+                # Create a hidden uploader for Option 1 to prevent errors
+                reference_files = st.file_uploader("Upload reference documents (not used in Option 1)", 
+                                                  type=['pdf', 'png', 'jpg', 'jpeg'], 
+                                                  accept_multiple_files=True,
+                                                  key="reference_files",
+                                                  label_visibility="collapsed")
     
-    # Bottom frame (Processing Options)
+    # Bottom frame (Additional Options)
     with bottom_container:
-        st.markdown("## Processing Options")
+        st.markdown("## Visualization Options")
         
         vis_option = st.radio(
             "Choose visualization style (for Option 1):",
@@ -659,7 +663,7 @@ def main():
                     total_kb = sum(file.size / 1024 for file in source_files)
                     st.write(f"Total file size: {total_kb:.2f} KB")
                     
-                    # Process each source file - use Option 1 fields (source_selected)
+                    # Process each source file
                     for file_idx, uploaded_file in enumerate(source_files):
                         progress_text.text(f"Processing file {file_idx + 1}/{len(source_files)}: {uploaded_file.name}")
                         progress_bar.progress((file_idx) / len(source_files))
@@ -671,7 +675,7 @@ def main():
                         # Process timing for this specific file
                         file_start_time = time.time()
                         
-                        # Process the file - use source_selected fields for Option 1
+                        # Process the file using option1 fields
                         results = process_file(original_path, source_selected, client, temp_dir)
                         
                         # Calculate timing information
@@ -702,3 +706,97 @@ def main():
                                                 str(result['path']), 
                                                 COLORS[color_idx]
                                             )
+                            else:
+                                # Option 2 - Unified visualization
+                                display_unified_evidence(result['data'], str(result['path']))
+                
+                # Option 2: Extract and Compare
+                else:
+                    st.subheader("Comparison Results")
+                    
+                    # We'll use the first file from each group for comparison
+                    if not source_files or not reference_files:
+                        st.error("Please upload both source and reference documents")
+                        st.stop()
+                    
+                    source_file = source_files[0]
+                    reference_file = reference_files[0]
+                    
+                    # Save uploaded files to temp directory
+                    source_path = temp_dir / f"source_{source_file.name}"
+                    source_path.write_bytes(source_file.getvalue())
+                    
+                    reference_path = temp_dir / f"reference_{reference_file.name}"
+                    reference_path.write_bytes(reference_file.getvalue())
+                    
+                    # Process timing
+                    comparison_start_time = time.time()
+                    
+                    # IMPORTANT: For Option 2, both files should use reference fields
+                    reference_fields = get_reference_fields()
+                    
+                    progress_text.text(f"Processing source file: {source_file.name}")
+                    progress_bar.progress(0.25)
+                    source_results = process_file(source_path, reference_fields, client, temp_dir)
+                    
+                    progress_text.text(f"Processing reference file: {reference_file.name}")
+                    progress_bar.progress(0.5)
+                    reference_results = process_file(reference_path, reference_fields, client, temp_dir)
+                    
+                    progress_text.text("Comparing results...")
+                    progress_bar.progress(0.75)
+                    
+                    # Get the extracted data
+                    if source_results and reference_results:
+                        source_data = source_results[0]['data']
+                        reference_data = reference_results[0]['data']
+                        
+                        # Display comparison
+                        display_comparison_evidence(
+                            source_data, 
+                            reference_data, 
+                            str(source_results[0]['path'])
+                        )
+                    else:
+                        st.error("Error processing files for comparison")
+                    
+                    # Calculate timing information
+                    comparison_end_time = time.time()
+                    comparison_time = comparison_end_time - comparison_start_time
+                    
+                    # Display timing metrics
+                    total_size_kb = source_path.stat().st_size / 1024 + reference_path.stat().st_size / 1024
+                    time_per_kb = comparison_time / total_size_kb if total_size_kb > 0 else 0
+                    
+                    st.success(f"✅ Comparison completed in {format_time(comparison_time)}")
+                    st.info(f"Total size: {total_size_kb:.2f} KB | Time per KB: {format_time(time_per_kb)} per KB")
+                
+                # Update progress to complete
+                progress_bar.progress(1.0)
+                progress_text.text("Processing complete!")
+                
+                # Display overall timing information
+                end_time = time.time()
+                total_processing_time = end_time - start_time
+                
+                # For Option 1, calculate total KB
+                if "Option 1" in process_option:
+                    total_kb = sum(file.size / 1024 for file in source_files)
+                    time_per_kb_overall = total_processing_time / total_kb if total_kb > 0 else 0
+                else:
+                    # For Option 2, use source + reference file size
+                    total_kb = source_file.size / 1024 + reference_file.size / 1024
+                    time_per_kb_overall = total_processing_time / total_kb if total_kb > 0 else 0
+                
+                # Create a metrics display for timing
+                st.markdown("## Processing Time Metrics")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Processing Time", format_time(total_processing_time))
+                with col2:
+                    st.metric("Total File Size", f"{total_kb:.2f} KB")
+                with col3:
+                    st.metric("Avg Time per KB", format_time(time_per_kb_overall))
+
+if __name__ == "__main__":
+    main()
