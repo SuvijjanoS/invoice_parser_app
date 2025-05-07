@@ -722,42 +722,55 @@ def main():
                 else:
                     st.subheader("Comparison Results")
                     
-                    # We'll use the first file from each group for comparison
+                    # Check for uploaded files
                     if not source_files or not reference_files:
                         st.error("Please upload both source and reference documents")
                         st.stop()
                     
-                    source_file = source_files[0]
+                    # Get the reference file (we'll use the first one)
                     reference_file = reference_files[0]
-                    
-                    # Save uploaded files to temp directory
-                    source_path = temp_dir / f"source_{source_file.name}"
-                    source_path.write_bytes(source_file.getvalue())
-                    
                     reference_path = temp_dir / f"reference_{reference_file.name}"
                     reference_path.write_bytes(reference_file.getvalue())
                     
-                    # Process timing
-                    comparison_start_time = time.time()
-                    
-                    # IMPORTANT: For Option 2, both files should use reference fields
-                    reference_fields = get_reference_fields()
-                    
-                    progress_text.text(f"Processing source file: {source_file.name}")
-                    progress_bar.progress(0.25)
-                    source_results = process_file(source_path, reference_fields, client, temp_dir)
-                    
+                    # Process the reference file once
                     progress_text.text(f"Processing reference file: {reference_file.name}")
-                    progress_bar.progress(0.5)
+                    progress_bar.progress(0.2)
                     reference_results = process_file(reference_path, reference_fields, client, temp_dir)
                     
-                    progress_text.text("Comparing results...")
-                    progress_bar.progress(0.75)
+                    if not reference_results:
+                        st.error("Error processing reference file")
+                        st.stop()
                     
-                    # Get the extracted data
-                    if source_results and reference_results:
+                    reference_data = reference_results[0]['data']
+                    
+                    # Process all source files
+                    total_size_kb = reference_file.size / 1024
+                    total_files = len(source_files)
+                    
+                    for file_idx, source_file in enumerate(source_files):
+                        # Update progress
+                        progress_value = 0.2 + (0.8 * (file_idx / total_files))
+                        progress_text.text(f"Processing source file {file_idx+1}/{total_files}: {source_file.name}")
+                        progress_bar.progress(progress_value)
+                        
+                        # Save source file
+                        source_path = temp_dir / f"source_{source_file.name}"
+                        source_path.write_bytes(source_file.getvalue())
+                        total_size_kb += source_file.size / 1024
+                        
+                        # Process timing
+                        comparison_start_time = time.time()
+                        
+                        # Process source file
+                        source_results = process_file(source_path, reference_fields, client, temp_dir)
+                        
+                        if not source_results:
+                            st.error(f"Error processing source file: {source_file.name}")
+                            continue
+                        
+                        # Display comparison for this file
+                        st.markdown(f"### Comparison Results for: {source_file.name}")
                         source_data = source_results[0]['data']
-                        reference_data = reference_results[0]['data']
                         
                         # Display comparison
                         display_comparison_evidence(
@@ -765,19 +778,19 @@ def main():
                             reference_data, 
                             str(source_results[0]['path'])
                         )
-                    else:
-                        st.error("Error processing files for comparison")
-                    
-                    # Calculate timing information
-                    comparison_end_time = time.time()
-                    comparison_time = comparison_end_time - comparison_start_time
-                    
-                    # Display timing metrics
-                    total_size_kb = source_path.stat().st_size / 1024 + reference_path.stat().st_size / 1024
-                    time_per_kb = comparison_time / total_size_kb if total_size_kb > 0 else 0
-                    
-                    st.success(f"✅ Comparison completed in {format_time(comparison_time)}")
-                    st.info(f"Total size: {total_size_kb:.2f} KB | Time per KB: {format_time(time_per_kb)} per KB")
+                        
+                        # Calculate timing information
+                        comparison_end_time = time.time()
+                        comparison_time = comparison_end_time - comparison_start_time
+                        file_size_kb = source_path.stat().st_size / 1024
+                        time_per_kb = comparison_time / file_size_kb if file_size_kb > 0 else 0
+                        
+                        st.success(f"✅ Comparison for {source_file.name} completed in {format_time(comparison_time)}")
+                        st.info(f"File size: {file_size_kb:.2f} KB | Time per KB: {format_time(time_per_kb)} per KB")
+                        
+                        # Add a divider between files
+                        if file_idx < len(source_files) - 1:
+                            st.markdown("---")
                 
                 # Update progress to complete
                 progress_bar.progress(1.0)
