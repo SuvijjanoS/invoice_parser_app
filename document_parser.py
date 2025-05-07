@@ -587,7 +587,7 @@ def main():
     with top_container:
         # For Option 1, only show Files to Check section
         if "Option 1" in process_option:
-            # Left frame (Files to check)
+            # Files to check section
             st.markdown("## Files to Check")
             source_selected = manage_fields(top_container, "source")
             source_files = st.file_uploader("Upload documents to check", 
@@ -595,21 +595,11 @@ def main():
                                           accept_multiple_files=True,
                                           key="source_files")
             
-            # Create a hidden uploader for reference files to prevent errors
-            # Make it completely hidden with empty_container trick
-            empty_container = st.empty()
-            with empty_container.container():
-                reference_files = st.file_uploader("Hidden Reference Files", 
-                                                  type=['pdf', 'png', 'jpg', 'jpeg'], 
-                                                  accept_multiple_files=True,
-                                                  key="reference_files",
-                                                  label_visibility="collapsed")
-                # Hide the container
-                st.markdown("""
-                <style>
-                    [data-testid="stFileUploader"] {display: none;}
-                </style>
-                """, unsafe_allow_html=True)
+            # Create a hidden reference for reference files without showing UI
+            # Use session state to store empty reference files
+            if "reference_files" not in st.session_state:
+                st.session_state.reference_files = []
+            reference_files = st.session_state.reference_files
         
         # For Option 2, show both columns
         else:
