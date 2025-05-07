@@ -591,12 +591,15 @@ def main():
         with left_col:
             st.markdown("## Files to Check")
             
-            # Get fields appropriate for the selected option
-            source_fields = get_option1_fields()
-            if "Option 2" in process_option:
-                source_fields = get_reference_fields()
+            # Only show fields management for Option 1
+            if "Option 1" in process_option:
+                source_selected = manage_fields(left_col, "source")
+            else:
+                # For Option 2, inform user that reference fields will be used
+                st.info("When comparing documents, both 'Files to Check' and 'Reference Files' use the same field set defined under 'Reference Files'.")
+                # Use the reference fields for extraction in Option 2
+                source_selected = get_reference_fields()
                 
-            source_selected = manage_fields(left_col, "source")
             source_files = st.file_uploader("Upload documents to check", 
                                            type=['pdf', 'png', 'jpg', 'jpeg'], 
                                            accept_multiple_files=True,
