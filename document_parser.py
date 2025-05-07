@@ -115,14 +115,11 @@ def get_default_source_fields() -> List[Dict[str, str]]:
 def get_default_reference_fields() -> List[Dict[str, str]]:
     """Default fields for reference documents."""
     return [
-        {"name": "Document Type", "description": "The type of document (e.g., Invoice, Receipt, etc.)"},
-        {"name": "Document Date", "description": "The date [dd-month-year] the document was issued"},
+       
         {"name": "Receiving Company Name", "description": "The name of the company receiving the invoice"},
         {"name": "Receiving Company Address", "description": "The complete address of the receiving company"},
         {"name": "Receiving Company Tax ID", "description": "The tax identification number of the receiving company"},
-        {"name": "Issuing Company Name", "description": "The name of the company/vendor/supplier issuing the invoice"},
-        {"name": "Amount", "description": "The Grand Total amount of the invoice."},
-        {"name": "VAT", "description": "The value-added-tax on the invoice."}
+      
     ]
 
 def manage_fields(container, prefix):
