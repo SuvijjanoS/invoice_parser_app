@@ -123,7 +123,7 @@ def get_reference_fields() -> List[Dict[str, str]]:
 
 def manage_fields(container, prefix):
     """Manage fields for extraction, with appropriate defaults based on prefix."""
-    container.subheader("Manage Fields")
+    # No title here anymore - removed "Manage Fields" heading
     
     # Initialize with appropriate fields based on the section
     if f'{prefix}_extraction_fields' not in st.session_state:
